@@ -7,9 +7,9 @@
 
 In IHP an action is a place for request handling logic. A controller is just a group of related actions.
 
-You can think about actions a message sent to your application, e.g. a `ShowPostAction { postId :: Id Post }` is basically the message "Show me the post with id $postId".
+You can think about an action as a message sent to your application, e.g. a `ShowPostAction { postId :: Id Post }` is basically the message "Show me the post with id $postId".
 
-Each action needs to be define as a data structure inside `Web/Types.hs`. Therefore you can see an overview of all the messages which can be sent to your application just by looking at `Web/Types.hs`.
+Each action needs to be defined as a data structure inside `Web/Types.hs`. Therefore you can see an overview of all the messages which can be sent to your application just by looking at `Web/Types.hs`.
 
 ## Creating a new Controller
 
@@ -38,7 +38,7 @@ instance Controller PostsController where
     action ShowPostAction { postId } = renderPlain "Hello World"
 ```
 
-This implementation for `ShowPostAction` responds with a simple plain text message. The `action` implementation is usally a big pattern match over all possible actions of a controller.
+This implementation for `ShowPostAction` responds with a simple plain text message. The `action` implementation is usually a big pattern match over all possible actions of a controller.
 
 ## Reading Query and Body Parameters
 
@@ -78,12 +78,37 @@ When the parameter is optional, use `paramOrDefault`:
 
 ```haskell
 action UsersAction = do
-    let maxItems = paramOrDefault @Int "maxItems" 50
+    let maxItems = paramOrDefault @Int 50 "maxItems"
 ```
 
 When this action is called without the `maxItems` parameter being set (or when invalid), it will fall back to the default value `50`.
 
 There is also `paramOrNothing` which will return `Nothing` when the parameter is missing and `Just theValue` otherwise.
+
+
+### Multiple Params With Same Name (Checkboxes)
+
+When working with checkboxes sometimes there are multiple values for a given parameter name. Given a form like this:
+
+```html
+<h1>Pancake</h1>
+
+<input name="ingredients" type="checkbox" value="milk" /> Milk
+
+<input name="ingredients" type="checkbox" value="egg" /> Egg
+```
+
+When both checkboxes for Milk and Egg are checked, the usual way of calling `param @Text "ingredients"` will only return the first ingredient `"Milk"`. To access all the checked `ingredients` use `paramList`:
+
+```haskell
+action BuildFood = do
+    let ingredients = paramList @Text "ingredients"
+```
+
+When this action is called with both checkboxes checked `ingredients` will be set to `["milk", "egg"]`. When no checkbox is checked it will return an empty list.
+
+Similiar to `param` this works out of the box for Ids, UUID, Bools, Timestamps, etc. 
+
 
 ### Passing Data from the Action to the View
 
@@ -102,7 +127,7 @@ And an `ExampleView` like this:
 ```haskell
 data ExampleView = ExampleView { }
 
-instance View ExampleView ViewContext where
+instance View ExampleView where
     html ExampleView { .. } = [hsx|Hello World!|]
 ```
 
@@ -111,7 +136,7 @@ Now we want to pass the user's firstname to the view, to make the hello world a 
 ```haskell
 data ExampleView = ExampleView { firstname :: Text }
 
-instance View ExampleView ViewContext where
+instance View ExampleView where
     html ExampleView { .. } = [hsx|Hello World, {firstname}!|]
 ```
 
@@ -124,16 +149,25 @@ action ExampleAction = do
 
 This will pass the firstname `"Tester"` to our view.
 
-We can also make it more dynamically and allow the user to specify the firstname via a query parameter:
+We can also make it act more dynamically and allow the user to specify the firstname via a query parameter:
 ```haskell
 action ExampleAction = do
-    let firstname = paramOrDefault @Text "firstname" "Unnamed"
+    let firstname = paramOrDefault @Text "Unnamed" "firstname"
     render ExampleView { .. }
 ```
 
 This will render `Hello World, Unnamed!` when the `ExampleAction` is called without a `firstname` parameter.
 
 
+### Accessing the FrameworkConfig inside Controllers and Views.
+The instance of the `FrameworkConfig` that is defined in `Config/Config.hs` will be part of the `RequestContext` and is thus available in controllers. To make it more convienient a  helper function called `fromConfig` is available. This function takes a record from the FrameworkConfig and evaluates it.
+
+For example:
+```haskell
+action MyAction = do
+    let env = fromConfig environment
+    when (isDevelopment env) (putStrLn "Running in dev mode")
+```
 
 
 ### Advanced: Working with Custom Types
@@ -188,7 +222,7 @@ instance Controller PostsController where
 
 ## Accessing the Current Action
 
-Inside the `beforeAction` and `action` you can access the current action using the special `?theAction` variable. That is useful when writing controller helpers, because the variable is passed implicit.
+Inside the `beforeAction` and `action` you can access the current action using the special `?theAction` variable. That is useful when writing controller helpers, because the variable is passed implicitly.
 
 ## Accessing the Current Request
 
@@ -196,7 +230,7 @@ IHP uses the Haskell WAI standard for dealing with HTTP request and responses. Y
 
 Take a look at [the Wai documentation](https://hackage.haskell.org/package/wai-3.2.2.1/docs/Network-Wai.html) to see what you can do with the Wai `Request`:
 
-```
+```haskell
 action ExampleAction = do
     let requestBody = request |> getRequestBodyChunk
 ```
@@ -205,8 +239,11 @@ IHP provides a few shortcuts for commonly used request data:
 
 ```haskell
 action ExampleAction = do
-    -- Use `getRequestUrl` for accessing the current request path
-    putStrLn ("Current request url: " <> tshow getRequestUrl)
+    -- Use `getRequestPath` for accessing the current request path (e.g. /Users)
+    putStrLn ("Current request url: " <> tshow getRequestPath)
+
+    -- Use `getRequestPathAndQuery` for accessing the path with all parameters (e.g. /ShowUser?userId=...)
+    putStrLn ("Current request url: " <> tshow getRequestPathAndQuery)
 
     -- Access the request body
     body <- getRequestBody
@@ -221,27 +258,27 @@ Use `getHeader` to access a request header:
 
 ```haskell
 action ExampleAction = do
-    userAgent <- getHeader "User-Agent"
+    let userAgent = getHeader "User-Agent"
 ```
 
 In this example, when the `User-Agent` header is not provided by the request
 the `userAgent` variable will be set to `Nothing`. Otherwise it will be set
 to `Just "the user agent value"`.
 
-The header is looked up in the request case insensitive.
+The lookup for the header in the request is case insensitive.
 
 
 ## Rendering Responses
 
 ### Rendering Views
 
-Inside a controller, you have several ways of sending a response. The most-common way is to use the `render` function with a `View` data structure, like this:
+Inside a controller, you have several ways of sending a response. The most common way is to use the `render` function with a `View` data structure, like this:
 
 ```
 render ShowPostView { .. }
 ```
 
-The `render` function automatically picks the right response format based on the `Accept` header of the browser. It will try to send a html response, when html is requested and will also try to send a json response when a json response is expected. A [`406 Not Acceptable`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/406) will be send when the `render` function cannot fullfil the requested `Accept` formats.
+The `render` function automatically picks the right response format based on the `Accept` header of the browser. It will try to send a html response when html is requested, and will also try to send a json response when a json response is expected. A [`406 Not Acceptable`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/406) will be send when the `render` function cannot fullfil the requested `Accept` formats.
 
 ### Rendering Plain Text
 
@@ -254,9 +291,9 @@ action ExampleAction = do
 
 ### Rendering HTML
 
-Usually you want render your html using a view. See `Rendering Views` for details.
+Usually you want to render your html using a view. See `Rendering Views` for details.
 
-Sometimes you want render html without using views, e.g. doing it inline in the action. Call `respondHtml` for that:
+Sometimes you want to render html without using views, e.g. doing it inline in the action. Call `respondHtml` for that:
 
 ```haskell
 action ExampleAction = do
@@ -271,7 +308,7 @@ Use `renderFile path contentType` to respond with a static file:
 
 ```haskell
 action ExampleAction = do
-    respondFile "static/terms.pdf" "application/pdf"
+    renderFile "static/terms.pdf" "application/pdf"
 ```
 
 ### Rendering a Not Found Message
@@ -294,9 +331,9 @@ action ExampleAction = do
     redirectTo ShowPostAction { postId = ... }
 ```
 
-When you need to pass custom query parameter, you cannot use the `redirectTo` function. See `Redirect to a Path` for that.
+When you need to pass a custom query parameter, you cannot use the `redirectTo` function. See `Redirect to a Path` for that.
 
-The redirect will use http status code `302`. The `baseUrl` in `Config/Config.hs` will be used. In development mode, the `baseUrl` might not be specified `Config/Config.hs` in. Then it will be set to localhost by default.
+The redirect will use http status code `302`. The `baseUrl` in `Config/Config.hs` will be used. In development mode, the `baseUrl` might not be specified in `Config/Config.hs`. Then it will be set to localhost by default.
 
 ### Redirect to a Path
 

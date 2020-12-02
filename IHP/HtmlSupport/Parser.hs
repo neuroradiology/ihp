@@ -20,16 +20,30 @@ import qualified Data.List as List
 import Control.Monad (unless)
 import Prelude (show)
 
-data AttributeValue = TextValue !Text | ExpressionValue !Text deriving (Show)
+data AttributeValue = TextValue !Text | ExpressionValue !Text deriving (Eq, Show)
 
-data Attribute = StaticAttribute !Text !AttributeValue | SpreadAttributes Text deriving (Show)
+data Attribute = StaticAttribute !Text !AttributeValue | SpreadAttributes Text deriving (Eq, Show)
 
 data Node = Node !Text ![Attribute] ![Node]
     | TextNode !Text
-    | SplicedNode !Text
+    | PreEscapedTextNode !Text -- ^ Used in @script@ or @style@ bodies
+    | SplicedNode !Text -- ^ Inline haskell expressions like @{myVar}@ or @{f "hello"}@
     | Children ![Node]
-    deriving (Show)
+    | CommentNode !Text
+    deriving (Eq, Show)
 
+-- | Parses a HSX text and returns a 'Node'
+--
+-- __Example:__
+-- 
+-- > let filePath = "my-template"
+-- > let line = 0
+-- > let col = 0
+-- > let position = Megaparsec.SourcePos filePath (Megaparsec.mkPos line) (Megaparsec.mkPos col)
+-- > let hsxText = "<strong>Hello</strong>"
+-- > 
+-- > let (Right node) = parseHsx position hsxText
+parseHsx :: SourcePos -> Text -> Either (ParseErrorBundle Text Void) Node
 parseHsx position code = runParser (setPosition position *> parser) "" code
 
 type Parser = Parsec Void Text
@@ -46,7 +60,7 @@ parser = do
     eof
     pure node
 
-hsxElement = try hsxSelfClosingElement <|> hsxNormalElement
+hsxElement = try hsxComment <|> try hsxSelfClosingElement <|> hsxNormalElement
 
 manyHsxElement = do
     children <- many hsxChild
@@ -55,13 +69,35 @@ manyHsxElement = do
 hsxSelfClosingElement = do
     _ <- char '<'
     name <- hsxElementName
-    attributes <- hsxNodeAttributes (string "/>")
+    attributes <-
+      if name `List.elem` leafs
+        then hsxNodeAttributes (string ">" <|> string "/>")
+        else hsxNodeAttributes (string "/>")
     space
     pure (Node name attributes [])
 
 hsxNormalElement = do
     (name, attributes) <- hsxOpeningElement
-    children <- stripTextNodeWhitespaces <$> manyTill (try hsxChild) (hsxClosingElement name)
+    let parsePreEscapedTextChildren transformText = do
+                    let closingElement = "</" <> name <> ">"
+                    text <- cs <$> manyTill anySingle (string closingElement)
+                    pure [PreEscapedTextNode (transformText text)]
+    let parseNormalHSXChildren = stripTextNodeWhitespaces <$> manyTill (try hsxChild) (hsxClosingElement name)
+
+    -- script and style tags have special handling for their children. Inside those tags
+    -- we allow any kind of content. Using a haskell expression like @<script>{myHaskellExpr}</script>@
+    -- will just literally output the string @{myHaskellExpr}@ without evaluating the haskell expression itself.
+    --
+    -- Here is an example HSX code explaining the problem:
+    -- [hsx|<style>h1 { color: red; }</style>|]
+    -- The @{ color: red; }@ would be parsed as a inline haskell expression without the special handling
+    --
+    -- Additionally we don't do the usual escaping for style and script bodies, as this will make e.g. the
+    -- javascript unusuable.
+    children <- case name of
+            "script" -> parsePreEscapedTextChildren Text.strip
+            "style" -> parsePreEscapedTextChildren (collapseSpace . Text.strip)
+            otherwise -> parseNormalHSXChildren
     pure (Node name attributes children)
 
 hsxOpeningElement = do
@@ -70,6 +106,14 @@ hsxOpeningElement = do
     space
     attributes <- hsxNodeAttributes (char '>')
     pure (name, attributes)
+
+hsxComment :: Parser Node
+hsxComment = do
+    string "<!--"
+    body :: String <- manyTill (satisfy (const True)) (string "-->")
+    space
+    pure (CommentNode (cs body))
+
 
 hsxNodeAttributes :: Parser a -> Parser [Attribute]
 hsxNodeAttributes end = staticAttributes
@@ -94,21 +138,40 @@ hsxSplicedAttributes = do
 hsxNodeAttribute = do
     key <- hsxAttributeName
     space
-    _ <- char '='
-    space
-    value <- hsxQuotedValue <|> hsxSplicedValue
-    space
-    pure (StaticAttribute key value)
+
+    -- Boolean attributes like <input disabled/> will be represented as <input disabled="disabled"/>
+    -- as there is currently no other way to represent them with blaze-html.
+    --
+    -- This is ok, see: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
+    let attributeWithoutValue = do
+            pure (StaticAttribute key (TextValue key))
+
+    -- Parsing normal attributes like <input value="Hello"/>
+    let attributeWithValue = do
+            _ <- char '='
+            space
+            value <- hsxQuotedValue <|> hsxSplicedValue
+            space
+            pure (StaticAttribute key value)
+
+    attributeWithValue <|> attributeWithoutValue
+
 
 hsxAttributeName :: Parser Text
-hsxAttributeName = choice ([dataAttribute, ariaAttribute] <> (List.map string attributes))
+hsxAttributeName = do
+        name <- rawAttribute
+        unless (isValidAttributeName name) (fail $ "Invalid attribute name: " <> cs name)
+        pure name
     where
-        prefixedAttribute prefix = do
-            string prefix
-            d <- takeWhile1P Nothing (\c -> Char.isAlphaNum c || c == '-')
-            pure (prefix <> d)
-        dataAttribute = prefixedAttribute "data-"
-        ariaAttribute = prefixedAttribute "aria-"
+        isValidAttributeName name =
+            "data-" `Text.isPrefixOf` name
+            || "aria-" `Text.isPrefixOf` name
+            || "hx-" `Text.isPrefixOf` name
+            || "hx-" `Text.isPrefixOf` name
+            || name `List.elem` attributes
+
+        rawAttribute = takeWhile1P Nothing (\c -> Char.isAlphaNum c || c == '-')
+
 
 hsxQuotedValue :: Parser AttributeValue
 hsxQuotedValue = do
@@ -126,13 +189,17 @@ hsxClosingElement name = do
 
 hsxChild = hsxElement <|> hsxSplicedNode <|> hsxText
 
+-- | Parses a hsx text node
+--
+-- Stops parsing when hitting a variable, like `{myVar}`
 hsxText :: Parser Node
-hsxText = do
-    value <- takeWhile1P (Just "text") (\c -> c /= '{' && c /= '}' && c /= '<' && c /= '>')
-    let isWhitespaceTextOnly = Text.null (Text.strip value)
-    pure if isWhitespaceTextOnly
-        then TextNode ""
-        else TextNode (collapseSpace value)
+hsxText = buildTextNode <$> takeWhile1P (Just "text") (\c -> c /= '{' && c /= '}' && c /= '<' && c /= '>')
+
+-- | Builds a TextNode and strips all surround whitespace from the input string
+buildTextNode :: Text -> Node
+buildTextNode value 
+    | Text.null (Text.strip value) = TextNode ""
+    | otherwise = TextNode (collapseSpace value)
 
 data TokenTree = TokenLeaf Text | TokenNode [TokenTree] deriving (Show)
 
@@ -158,7 +225,7 @@ hsxSplicedNode = do
 
 hsxElementName :: Parser Text
 hsxElementName = do
-    name <- takeWhile1P (Just "identifier") (\c -> Char.isAlphaNum c || c == '_')
+    name <- takeWhile1P (Just "identifier") (\c -> Char.isAlphaNum c || c == '_' || c == '-')
     unless (name `List.elem` parents || name `List.elem` leafs) (fail $ "Invalid tag name: " <> cs name)
     space
     pure name
@@ -207,9 +274,59 @@ attributes =
         , "ontouchstart", "download"
         , "allowtransparency", "minlength", "maxlength", "property"
         , "role"
-        , "d", "viewBox", "fill", "cx", "cy", "r", "x", "y", "text-anchor", "alignment-baseline"
+        , "d", "viewBox", "cx", "cy", "r", "x", "y", "text-anchor", "alignment-baseline"
         , "line-spacing", "letter-spacing"
         , "integrity", "crossorigin", "poster"
+        , "accent-height", "accumulate", "additive", "alphabetic", "amplitude"
+        , "arabic-form", "ascent", "attributeName", "attributeType", "azimuth"
+        , "baseFrequency", "baseProfile", "bbox", "begin", "bias", "by", "calcMode"
+        , "cap-height", "class", "clipPathUnits", "contentScriptType"
+        , "contentStyleType", "cx", "cy", "d", "descent", "diffuseConstant", "divisor"
+        , "dur", "dx", "dy", "edgeMode", "elevation", "end", "exponent"
+        , "externalResourcesRequired", "filterRes", "filterUnits", "font-family"
+        , "font-size", "font-stretch", "font-style", "font-variant", "font-weight"
+        , "format", "from", "fx", "fy", "g1", "g2", "glyph-name", "glyphRef"
+        , "gradientTransform", "gradientUnits", "hanging", "height", "horiz-adv-x"
+        , "horiz-origin-x", "horiz-origin-y", "id", "ideographic", "in", "in2"
+        , "intercept", "k", "k1", "k2", "k3", "k4", "kernelMatrix", "kernelUnitLength"
+        , "keyPoints", "keySplines", "keyTimes", "lang", "lengthAdjust"
+        , "limitingConeAngle", "local", "markerHeight", "markerUnits", "markerWidth"
+        , "maskContentUnits", "maskUnits", "mathematical", "max", "media", "method"
+        , "min", "mode", "name", "numOctaves", "offset", "onabort", "onactivate"
+        , "onbegin", "onclick", "onend", "onerror", "onfocusin", "onfocusout", "onload"
+        , "onmousedown", "onmousemove", "onmouseout", "onmouseover", "onmouseup"
+        , "onrepeat", "onresize", "onscroll", "onunload", "onzoom", "operator", "order"
+        , "orient", "orientation", "origin", "overline-position", "overline-thickness"
+        , "panose-1", "path", "pathLength", "patternContentUnits", "patternTransform"
+        , "patternUnits", "points", "pointsAtX", "pointsAtY", "pointsAtZ"
+        , "preserveAlpha", "preserveAspectRatio", "primitiveUnits", "r", "radius"
+        , "refX", "refY", "rendering-intent", "repeatCount", "repeatDur"
+        , "requiredExtensions", "requiredFeatures", "restart", "result", "rotate", "rx"
+        , "ry", "scale", "seed", "slope", "spacing", "specularConstant"
+        , "specularExponent", "spreadMethod", "startOffset", "stdDeviation", "stemh"
+        , "stemv", "stitchTiles", "strikethrough-position", "strikethrough-thickness"
+        , "string", "style", "surfaceScale", "systemLanguage", "tableValues", "target"
+        , "targetX", "targetY", "textLength", "title", "to", "transform", "type", "u1"
+        , "u2", "underline-position", "underline-thickness", "unicode", "unicode-range"
+        , "units-per-em", "v-alphabetic", "v-hanging", "v-ideographic", "v-mathematical"
+        , "values", "version", "vert-adv-y", "vert-origin-x", "vert-origin-y", "viewBox"
+        , "viewTarget", "width", "widths", "x", "x-height", "x1", "x2"
+        , "xChannelSelector", "xlink:actuate", "xlink:arcrole", "xlink:href"
+        , "xlink:role", "xlink:show", "xlink:title", "xlink:type", "xml:base"
+        , "xml:lang", "xml:space", "y", "y1", "y2", "yChannelSelector", "z", "zoomAndPan"
+        , "alignment-baseline", "baseline-shift", "clip-path", "clip-rule"
+        , "clip", "color-interpolation-filters", "color-interpolation"
+        , "color-profile", "color-rendering", "color", "cursor", "direction"
+        , "display", "dominant-baseline", "enable-background", "fill-opacity"
+        , "fill-rule", "fill", "filter", "flood-color", "flood-opacity"
+        , "font-size-adjust", "glyph-orientation-horizontal"
+        , "glyph-orientation-vertical", "image-rendering", "kerning", "letter-spacing"
+        , "lighting-color", "marker-end", "marker-mid", "marker-start", "mask"
+        , "opacity", "overflow", "pointer-events", "shape-rendering", "stop-color"
+        , "stop-opacity", "stroke-dasharray", "stroke-dashoffset", "stroke-linecap"
+        , "stroke-linejoin", "stroke-miterlimit", "stroke-opacity", "stroke-width"
+        , "stroke", "text-anchor", "text-decoration", "text-rendering", "unicode-bidi"
+        , "visibility", "word-spacing", "writing-mode"
         ]
 
 parents :: [Text]
@@ -219,7 +336,7 @@ parents =
         , "code", "colgroup", "command", "datalist", "dd", "del", "details"
         , "dfn", "div", "dl", "dt", "em", "fieldset", "figcaption", "figure"
         , "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header"
-        , "hgroup", "html", "i", "iframe", "ins", "kbd", "label"
+        , "hgroup", "html", "i", "iframe", "ins", "ion-icon", "kbd", "label"
         , "legend", "li", "main", "map", "mark", "menu", "meter", "nav"
         , "noscript", "object", "ol", "optgroup", "option", "output", "p"
         , "pre", "progress", "q", "rp", "rt", "ruby", "samp", "script"

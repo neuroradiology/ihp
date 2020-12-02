@@ -1,4 +1,4 @@
-module IHP.IDE.CodeGen.ViewGenerator (buildPlan) where
+module IHP.IDE.CodeGen.ViewGenerator (buildPlan, buildPlan', ViewConfig (..)) where
 
 import IHP.Prelude
 import IHP.HaskellSupport
@@ -10,35 +10,35 @@ import IHP.IDE.CodeGen.Types
 import qualified IHP.IDE.SchemaDesigner.Parser as SchemaDesigner
 import IHP.IDE.SchemaDesigner.Types
 import qualified Text.Countable as Countable
-import IHP.IDE.CodeGen.ControllerGenerator (fieldsForTable)
 
 data ViewConfig = ViewConfig
-    { controllerName :: Text 
+    { controllerName :: Text
     , applicationName :: Text
     , modelName :: Text
     , viewName :: Text
     } deriving (Eq, Show)
 
 buildPlan :: Text -> Text -> Text -> IO (Either Text [GeneratorAction])
-buildPlan viewName applicationName controllerName =
-    if (null viewName || null controllerName)
-        then pure $ Left "View name and controller name cannot be empty"
-        else do 
+buildPlan viewName applicationName controllerName' =
+    if (null viewName || null controllerName')
+        then pure $ Left "Neither view name nor controller name can be empty"
+        else do
             schema <- SchemaDesigner.parseSchemaSql >>= \case
                 Left parserError -> pure []
                 Right statements -> pure statements
-            let modelName = tableNameToModelName controllerName
-            let viewConfig = ViewConfig {controllerName, applicationName, modelName, viewName }
-            pure $ Right $ generateGenericView schema viewConfig
+            let modelName = tableNameToModelName controllerName'
+            let controllerName = tableNameToControllerName controllerName'
+            let viewConfig = ViewConfig { .. }
+            pure $ Right $ buildPlan' schema viewConfig
 
 -- E.g. qualifiedViewModuleName config "Edit" == "Web.View.Users.Edit"
 qualifiedViewModuleName :: ViewConfig -> Text -> Text
 qualifiedViewModuleName config viewName =
     get #applicationName config <> ".View." <> get #controllerName config <> "." <> viewName
 
-generateGenericView :: [Statement] -> ViewConfig -> [GeneratorAction]
-generateGenericView schema config = 
-        let 
+buildPlan' :: [Statement] -> ViewConfig -> [GeneratorAction]
+buildPlan' schema config =
+        let
             controllerName = get #controllerName config
             name = get #viewName config
             singularName = config |> get #modelName
@@ -46,7 +46,10 @@ generateGenericView schema config =
             pluralVariableName = lcfirst controllerName
             nameWithSuffix = if "View" `isSuffixOf` name
                 then name
-                else name <> "View" --e.g. "TestView"
+                else name <> "View" --e.g. "Test" -> "TestView"
+            nameWithoutSuffix = if "View" `isSuffixOf` name
+                then Text.replace "View" "" name
+                else name --e.g. "TestView" -> "Test"
 
             indexAction = Countable.pluralize singularName <> "Action"
             specialCases = [
@@ -57,20 +60,20 @@ generateGenericView schema config =
                 ]
 
             modelFields :: [Text]
-            modelFields = fieldsForTable schema pluralVariableName
+            modelFields = fieldsForTable schema (modelNameToTableName pluralVariableName)
 
 
             viewHeader =
                 ""
-                <> "module " <> qualifiedViewModuleName config name <> " where\n"
+                <> "module " <> qualifiedViewModuleName config nameWithoutSuffix <> " where\n"
                 <> "import " <> get #applicationName config <> ".View.Prelude\n"
                 <> "\n"
-            
-            genericView = 
+
+            genericView =
                 viewHeader
                 <> "data " <> nameWithSuffix <> " = " <> nameWithSuffix <> "\n"
                 <> "\n"
-                <> "instance View " <> nameWithSuffix <> " ViewContext where\n"
+                <> "instance View " <> nameWithSuffix <> " where\n"
                 <> "    html " <> nameWithSuffix <> " { .. } = [hsx|\n"
                 <> "        <nav>\n"
                 <> "            <ol class=\"breadcrumb\">\n"
@@ -81,31 +84,32 @@ generateGenericView schema config =
                 <> "        <h1>" <> nameWithSuffix <> "</h1>\n"
                 <> "    |]\n"
 
-            showView = 
+            showView =
                 viewHeader
                 <> "data ShowView = ShowView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
                 <> "\n"
-                <> "instance View ShowView ViewContext where\n"
+                <> "instance View ShowView where\n"
                 <> "    html ShowView { .. } = [hsx|\n"
                 <> "        <nav>\n"
                 <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
+                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize singularName <> "</a></li>\n"
                 <> "                <li class=\"breadcrumb-item active\">Show " <> singularName <> "</li>\n"
                 <> "            </ol>\n"
                 <> "        </nav>\n"
                 <> "        <h1>Show " <> singularName <> "</h1>\n"
-                <> "    |]\n"
+                <> "        <p>{" <> singularVariableName <> "}</p>\n"
+                 <> "    |]\n"
 
-            newView = 
+            newView =
                 viewHeader
                 <> "data NewView = NewView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
                 <> "\n"
-                <> "instance View NewView ViewContext where\n"
+                <> "instance View NewView where\n"
                 <> "    html NewView { .. } = [hsx|\n"
                 <> "        <nav>\n"
                 <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
-                <> "                <li class=\"breadcrumb-item active\">Edit " <> singularName <> "</li>\n"
+                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize singularName <> "</a></li>\n"
+                <> "                <li class=\"breadcrumb-item active\">New " <> singularName <> "</li>\n"
                 <> "            </ol>\n"
                 <> "        </nav>\n"
                 <> "        <h1>New " <> singularName <> "</h1>\n"
@@ -114,19 +118,19 @@ generateGenericView schema config =
                 <> "\n"
                 <> "renderForm :: " <> singularName <> " -> Html\n"
                 <> "renderForm " <> singularVariableName <> " = formFor " <> singularVariableName <> " [hsx|\n"
-                <> (intercalate "\n" (map (\field -> "    {textField #" <> field <> "}") modelFields)) <> "\n"
+                <> (intercalate "\n" (map (\field -> "    {(textField #" <> field <> ")}") modelFields)) <> "\n"
                 <> "    {submitButton}\n"
                 <> "|]\n"
 
-            editView = 
+            editView =
                 viewHeader
                 <> "data EditView = EditView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
                 <> "\n"
-                <> "instance View EditView ViewContext where\n"
+                <> "instance View EditView where\n"
                 <> "    html EditView { .. } = [hsx|\n"
                 <> "        <nav>\n"
                 <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
+                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize singularName <> "</a></li>\n"
                 <> "                <li class=\"breadcrumb-item active\">Edit " <> singularName <> "</li>\n"
                 <> "            </ol>\n"
                 <> "        </nav>\n"
@@ -136,22 +140,22 @@ generateGenericView schema config =
                 <> "\n"
                 <> "renderForm :: " <> singularName <> " -> Html\n"
                 <> "renderForm " <> singularVariableName <> " = formFor " <> singularVariableName <> " [hsx|\n"
-                <> (intercalate "\n" (map (\field -> "    {textField #" <> field <> "}") modelFields)) <> "\n"
+                <> (intercalate "\n" (map (\field -> "    {(textField #" <> field <> ")}") modelFields)) <> "\n"
                 <> "    {submitButton}\n"
                 <> "|]\n"
 
-            indexView = 
+            indexView =
                 viewHeader
                 <> "data IndexView = IndexView { " <> pluralVariableName <> " :: [" <> singularName <> "] }\n"
                 <> "\n"
-                <> "instance View IndexView ViewContext where\n"
+                <> "instance View IndexView where\n"
                 <> "    html IndexView { .. } = [hsx|\n"
                 <> "        <nav>\n"
                 <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item active\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
+                <> "                <li class=\"breadcrumb-item active\"><a href={" <> indexAction <> "}>" <> Countable.pluralize singularName <> "</a></li>\n"
                 <> "            </ol>\n"
                 <> "        </nav>\n"
-                <> "        <h1>" <> name <> " <a href={pathTo New" <> singularName <> "Action} class=\"btn btn-primary ml-4\">+ New</a></h1>\n"
+                <> "        <h1>" <> nameWithoutSuffix <> " <a href={pathTo New" <> singularName <> "Action} class=\"btn btn-primary ml-4\">+ New</a></h1>\n"
                 <> "        <div class=\"table-responsive\">\n"
                 <> "            <table class=\"table\">\n"
                 <> "                <thead>\n"
@@ -178,6 +182,6 @@ generateGenericView schema config =
             chosenView = fromMaybe genericView (lookup nameWithSuffix specialCases)
         in
             [ EnsureDirectory { directory = get #applicationName config <> "/View/" <> controllerName }
-            , CreateFile { filePath = get #applicationName config <> "/View/" <> controllerName <> "/" <> name <> ".hs", fileContent = chosenView }
-            , AddImport { filePath = get #applicationName config <> "/Controller/" <> controllerName <> ".hs", fileContent = "import " <> qualifiedViewModuleName config name }
+            , CreateFile { filePath = get #applicationName config <> "/View/" <> controllerName <> "/" <> nameWithoutSuffix <> ".hs", fileContent = chosenView }
+            , AddImport { filePath = get #applicationName config <> "/Controller/" <> controllerName <> ".hs", fileContent = "import " <> qualifiedViewModuleName config nameWithoutSuffix }
             ]

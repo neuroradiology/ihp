@@ -3,11 +3,24 @@ Module: IHP.NameSupport
 Description:  Transforms names, e.g. table names to model names
 Copyright: (c) digitally induced GmbH, 2020
 -}
-module IHP.NameSupport (tableNameToModelName, columnNameToFieldName, humanize, ucfirst, lcfirst, fieldNameToColumnName, escapeHaskellKeyword) where
+module IHP.NameSupport
+( tableNameToModelName
+, columnNameToFieldName
+, modelNameToTableName
+, humanize
+, ucfirst
+, lcfirst
+, fieldNameToColumnName
+, escapeHaskellKeyword
+, tableNameToControllerName
+, toSlug
+) where
 
-import Prelude hiding (splitAt)
+import Prelude hiding (splitAt, words, map)
+import IHP.HaskellSupport
 import Data.Text
 import Data.String.Conversions (cs)
+import qualified Data.Char as Char
 import qualified Text.Inflections as Inflector
 import qualified Text.Countable as Countable
 
@@ -26,6 +39,37 @@ tableNameToModelName tableName = do
         then unwrapEither tableName $ Inflector.toCamelCased True $ singularizedTableName
         else ucfirst singularizedTableName
 {-# INLINE tableNameToModelName #-}
+
+-- | Transforms a underscore table name to a name for a controller
+--
+-- >>> tableNameToControllerName "users"
+-- "Users"
+--
+-- >>> tableNameToControllerName "projects"
+-- "Projects"
+--
+-- >>> tableNameToControllerName "user_projects"
+-- "UserProjects"
+tableNameToControllerName :: Text -> Text
+tableNameToControllerName tableName = do
+    if "_" `isInfixOf` tableName 
+        then unwrapEither tableName $ Inflector.toCamelCased True tableName
+        else ucfirst tableName
+{-# INLINE tableNameToControllerName #-}
+
+-- | Transforms a camel case model name to a underscored table name.
+--
+-- >>> modelNameToTableName "User"
+-- "users"
+--
+-- >>> modelNameToTableName "UserProject"
+-- "user_projects"
+modelNameToTableName :: Text -> Text
+modelNameToTableName modelName =
+        Inflector.toUnderscore modelName
+        |> unwrapEither modelName
+        |> Countable.pluralize
+{-# INLINE modelNameToTableName #-}
 
 -- | Transforms a underscore table column name to a camel case attribute name for use in haskell.
 --
@@ -148,3 +192,18 @@ haskellKeywords = [ "_"
     , "rec"
     , "proc"
     ]
+
+-- | Transforms a string to a value to be safely used in urls
+--
+-- >>> toSlug "IHP Release: 21.08.2020 (v21082020)"
+-- "ihp-release-21-08-2020-v21082020"
+--
+-- >>> toSlug "Hallo! @ Welt"
+-- "hallo-welt"
+toSlug :: Text -> Text
+toSlug text =
+    text
+    |> map (\char -> if Char.isAlphaNum char then char else ' ')
+    |> toLower
+    |> words
+    |> intercalate "-"

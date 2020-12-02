@@ -1,18 +1,20 @@
 module IHP.IDE.CodeGen.Controller where
 
-import IHP.ControllerPrelude
+import IHP.ControllerPrelude hiding (appPort)
 import IHP.IDE.ToolServer.Types
-import IHP.IDE.ToolServer.ViewContext
 import IHP.IDE.CodeGen.View.Generators
 import IHP.IDE.CodeGen.View.NewController
 import IHP.IDE.CodeGen.View.NewScript
 import IHP.IDE.CodeGen.View.NewView
+import IHP.IDE.CodeGen.View.NewMail
 import IHP.IDE.CodeGen.View.NewAction
 import IHP.IDE.CodeGen.View.NewApplication
+import IHP.IDE.CodeGen.View.NewMigration
 import IHP.IDE.CodeGen.Types
 import IHP.IDE.CodeGen.ControllerGenerator as ControllerGenerator
 import IHP.IDE.CodeGen.ScriptGenerator as ScriptGenerator
 import IHP.IDE.CodeGen.ViewGenerator as ViewGenerator
+import IHP.IDE.CodeGen.MailGenerator as MailGenerator
 import IHP.IDE.CodeGen.ActionGenerator as ActionGenerator
 import IHP.IDE.CodeGen.ApplicationGenerator as ApplicationGenerator
 import IHP.IDE.ToolServer.Helper.Controller
@@ -23,6 +25,7 @@ import qualified Data.Text.IO as Text
 import qualified Text.Inflections as Inflector
 import Control.Exception
 import System.Directory
+import qualified IHP.SchemaMigration as SchemaMigration
 
 
 instance Controller CodeGenController where
@@ -31,20 +34,21 @@ instance Controller CodeGenController where
 
     action NewControllerAction = do
         let controllerName = paramOrDefault "" "name"
-        controllerAlreadyExists <- doesControllerExist controllerName
+        let applicationName = paramOrDefault "Web" "applicationName"
+        controllerAlreadyExists <- doesControllerExist controllerName applicationName
+        applications <- findApplications
         when controllerAlreadyExists do
             setErrorMessage "Controller with this name does already exist."
             redirectTo NewControllerAction
-        plan <- ControllerGenerator.buildPlan controllerName
+        plan <- ControllerGenerator.buildPlan controllerName applicationName
         render NewControllerView { .. }
         where
-            doesControllerExist name = case ControllerGenerator.normalizeControllerName name of
-                Right [applicationName, controllerName'] -> doesFileExist $ cs applicationName <> "/Controller/" <> cs controllerName' <> ".hs"
-                Right [controllerName'] -> doesFileExist $ "Web/Controller/" <> cs controllerName' <> ".hs"
+            doesControllerExist controllerName applicationName = doesFileExist $ cs applicationName <> "/Controller/" <> cs controllerName <> ".hs"
 
     action CreateControllerAction = do
         let controllerName = param "name"
-        (Right plan) <- ControllerGenerator.buildPlan controllerName
+        let applicationName = param "applicationName"
+        (Right plan) <- ControllerGenerator.buildPlan controllerName applicationName
         executePlan plan
         setSuccessMessage "Controller generated"
         redirectTo GeneratorsAction
@@ -67,13 +71,14 @@ instance Controller CodeGenController where
 
     action NewViewAction = do
         let viewName = paramOrDefault "" "name"
-        let applicationName = "Web"
+        let applicationName = paramOrDefault "Web" "applicationName"
         let controllerName = paramOrDefault "" "controllerName"
         viewAlreadyExists <- doesFileExist $ (cs applicationName) <> "/View/" <> (cs controllerName) <> "/" <> (cs viewName) <>".hs"
         when viewAlreadyExists do
             setErrorMessage "View with this name already exists."
             redirectTo NewViewAction
-        controllers <- findWebControllers
+        controllers <- findControllers applicationName
+        applications <- findApplications
         plan <- ViewGenerator.buildPlan viewName applicationName controllerName
         render NewViewView { .. }
 
@@ -86,23 +91,46 @@ instance Controller CodeGenController where
         setSuccessMessage "View generated"
         redirectTo GeneratorsAction
 
+    action NewMailAction = do
+        let mailName = paramOrDefault "" "name"
+        let applicationName = paramOrDefault "Web" "applicationName"
+        let controllerName = paramOrDefault "" "controllerName"
+        mailAlreadyExists <- doesFileExist $ (cs applicationName) <> "/Mail/" <> (cs controllerName) <> "/" <> (cs mailName) <>".hs"
+        when mailAlreadyExists do
+            setErrorMessage "Mail with this name already exists."
+            redirectTo NewMailAction
+        controllers <- findControllers applicationName
+        applications <- findApplications
+        plan <- MailGenerator.buildPlan mailName applicationName controllerName
+        render NewMailView { .. }
+
+    action CreateMailAction = do
+        let mailName = paramOrDefault "" "name"
+        let applicationName = "Web"
+        let controllerName = paramOrDefault "" "controllerName"
+        (Right plan) <- MailGenerator.buildPlan mailName applicationName controllerName
+        executePlan plan
+        setSuccessMessage "Mail generated"
+        redirectTo GeneratorsAction
+
     action NewActionAction = do
         let actionName = paramOrDefault "" "name"
-        let applicationName = "Web"
+        let applicationName = paramOrDefault "Web" "applicationName"
         let controllerName = paramOrDefault "" "controllerName"
         let doGenerateView = paramOrDefault False "doGenerateView"
         controllers <- findWebControllers
+        applications <- findApplications
         plan <- ActionGenerator.buildPlan actionName applicationName controllerName doGenerateView
         render NewActionView { .. }
 
     action CreateActionAction = do
         let actionName = paramOrDefault "" "name"
-        let applicationName = "Web"
+        let applicationName = paramOrDefault "Web" "applicationName"
         let controllerName = paramOrDefault "" "controllerName"
         let doGenerateView = paramOrDefault False "doGenerateView"
         (Right plan) <- ActionGenerator.buildPlan actionName applicationName controllerName doGenerateView
         executePlan plan
-        setSuccessMessage "Action generated"
+        setSuccessMessage $ "Action" ++ (if doGenerateView then " and View " else "") ++ " generated"
         redirectTo GeneratorsAction
 
     action NewApplicationAction = do
@@ -117,6 +145,17 @@ instance Controller CodeGenController where
         setSuccessMessage "Application generated"
         redirectTo GeneratorsAction
 
+    action NewMigrationAction = do
+        let description = paramOrDefault "" "description"
+        render NewMigrationView { .. }
+    
+    action CreateMigrationAction = do
+        let description = param "description"
+        migration <- SchemaMigration.createMigration description
+        let path = SchemaMigration.migrationPath migration
+        setSuccessMessage ("Migration generated: " <> path)
+        openEditor path 0 0
+        redirectTo GeneratorsAction
 
     action OpenControllerAction = do
         let name = param "name"
@@ -140,7 +179,7 @@ executePlan actions = forEach actions evalAction
             Text.writeFile (cs filePath) (cs newContent)
             putStrLn ("* " <> filePath <> " (import)")
         evalAction AddImport { filePath, fileContent } = do
-            addImport filePath [fileContent]
+            addImport filePath fileContent
             putStrLn ("* " <> filePath <> " (import)")
         evalAction AddAction { filePath, fileContent } = do
             addAction filePath [fileContent]
@@ -194,16 +233,19 @@ deleteTextFromFile filePath lineContent = do
     let replacedContent = Text.replace lineContent "" fileContent
     Text.writeFile (cs filePath) replacedContent
 
-addImport :: Text -> [Text] -> IO ()
-addImport file importStatements = do
+addImport :: Text -> Text -> IO ()
+addImport file importStatement = do
     content :: Text <- Text.readFile (cs file)
-    case addImport' content importStatements of
+    case addImport' content importStatement of
         Just newContent -> Text.writeFile (cs file) (cs newContent)
-        Nothing -> putStrLn ("Could not automatically add " <> tshow importStatements <> " to " <> file)
+        Nothing -> pure ()
     pure ()
 
-addImport' :: Text -> [Text] -> Maybe Text
-addImport' file = appendLineAfter file ("import" `isPrefixOf`)
+addImport' :: Text -> Text -> Maybe Text
+addImport' content importStatement = do
+    if importStatement `isInfixOf` content
+        then Nothing
+        else appendLineAfter content ("import" `isPrefixOf`) [importStatement]
 
 addAction :: Text -> [Text] -> IO ()
 addAction filePath fileContent = do

@@ -5,7 +5,7 @@
 
 ## Introduction
 
-The QueryBuilder module allows you to compose database queries in a type-safe way. Below you find a short reference to all the commonly used functions.
+The QueryBuilder module allows you to compose database queries in a type-safe way. Below you can find a short reference to all the commonly-used functions.
 
 ## Creating a new query
 To query the database for some records, you first need to build a query.
@@ -46,7 +46,7 @@ example = do
 ```
 
 ### single row: `fetchOne`
-To run a query which will return a single and **throws an error if no record is found** row use `fetchOne`:
+To run a query which will return a single row and **throw an error if no record is found** use `fetchOne`:
 ```haskell
 example :: IO Project
 example = do
@@ -70,6 +70,21 @@ projectsByUser userId = do
     return projects
 ```
 
+Or the more general `filterWhereSql`:
+
+```haskell
+retiredEmployees :: IO [Employee]
+retiredEmployees = do
+    employees <- query @Employee
+             |> filterWhereSql (#retireddate, "IS NOT NULL")
+             |> fetch
+    -- Query: `SELECT * FROM employee WHERE retireddate IS NOT NULL`
+    return employees
+```
+
+Several other filter-functions for generating `WHERE` clauses exist, such as `filterWhereIn` and `filterWhereNotIn` which take lists of items. Read more about these in the [API docs on QueryBuilder](https://ihp.digitallyinduced.com/api-docs/IHP-QueryBuilder.html)
+
+
 ## Order By
 
 You can just use `orderBy #field`:
@@ -79,6 +94,37 @@ projects <- query @Project
         |> fetch
 -- Query: `SELECT * FROM projects ORDER BY created_at`
 ```
+
+Nested orderBys work as expected:
+```haskell
+projects <- query @Employee
+        |> orderBy #lastname
+        |> orderBy #firstname
+        |> fetch
+-- Query: `SELECT * FROM employees ORDER BY lastname, firstname`
+```
+
+## Limit
+
+To limit the number of rows returned:
+```haskell
+projects <- query @Project
+        |> limit 10
+        |> fetch
+-- Query: `SELECT * FROM projects LIMIT 10`
+```
+
+## Offset
+
+To skip a number of rows:
+```haskell
+projects <- query @Project
+        |> offset 10
+        |> fetch
+-- Query: `SELECT * FROM projects OFFSET 10`
+```
+Offset is most often used together with limit to implement paging.
+
 
 ## Or
 
@@ -144,7 +190,7 @@ let projectId :: ProjectId = ...
 project <- projectId |> fetch
 ```
 
-For convience there is also a `fetch` implementation for `Maybe SomeId`:
+For convenience there is also a `fetch` implementation for `Maybe SomeId`:
 
 ```haskell
 let assignedUserId :: Maybe UserId = project |> get #assignedUserId

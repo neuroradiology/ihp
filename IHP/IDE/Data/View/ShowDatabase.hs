@@ -4,7 +4,6 @@ import IHP.ViewPrelude
 import IHP.IDE.SchemaDesigner.Types
 import IHP.IDE.ToolServer.Types
 import IHP.IDE.ToolServer.Layout
-import IHP.View.Modal
 import IHP.IDE.SchemaDesigner.View.Layout
 import IHP.IDE.Data.View.Layout
 
@@ -12,13 +11,13 @@ data ShowDatabaseView = ShowDatabaseView {
         tableNames :: [Text]
     }
 
-instance View ShowDatabaseView ViewContext where
+instance View ShowDatabaseView where
     html ShowDatabaseView { .. } = [hsx|
-        <div class="container pt-5">
-            {customQuery ""}
+        <div class="mx-2 pt-5">
             <div class="row no-gutters bg-white">
                 {renderTableSelector tableNames ""}
             </div>
+            {customQuery ""}
         </div>
     |]
 
@@ -29,6 +28,7 @@ renderTableSelector tableNames activeTableName = [hsx|
             <h5>Tables</h5>
         </div>
         {forEach tableNames renderTable}
+        <div class="text-muted context-menu-notice">Right click to open context menu</div>
     </div>
 |]
     where

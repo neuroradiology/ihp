@@ -1,4 +1,4 @@
-module IHP.IDE.CodeGen.ControllerGenerator (buildPlan, normalizeControllerName, fieldsForTable) where
+module IHP.IDE.CodeGen.ControllerGenerator (buildPlan, buildPlan') where
 
 import ClassyPrelude
 import IHP.NameSupport
@@ -14,87 +14,55 @@ import IHP.IDE.SchemaDesigner.Types
 import qualified System.Posix.Env.ByteString as Posix
 import Control.Monad.Fail
 import IHP.IDE.CodeGen.Types
+import qualified IHP.IDE.CodeGen.ViewGenerator as ViewGenerator
 
-normalizeControllerName :: Text -> Either Text [Text]
-normalizeControllerName appAndControllerName = do
-    case Text.splitOn "." appAndControllerName of
-        [applicationName, controllerName'] -> do
-            if isAlphaOnly applicationName
-                then if isAlphaOnly controllerName'
-                    then Right [applicationName, controllerName']
-                    else Left ("Invalid controller name: " <> tshow controllerName')
-                else Left ("Invalid application name: " <> tshow applicationName)
-        [controllerName'] -> if isAlphaOnly controllerName'
-                then Right $ [controllerName']
-                else Left ("Invalid controller name: " <> tshow controllerName')
-        _ -> Left "Name should be either 'ControllerName' or 'ApplicationName.ControllerName'"
 
-buildPlan :: Text -> IO (Either Text [GeneratorAction])
-buildPlan appAndControllerName = do
+buildPlan :: Text -> Text -> IO (Either Text [GeneratorAction])
+buildPlan rawControllerName applicationName = do
     schema <- SchemaDesigner.parseSchemaSql >>= \case
         Left parserError -> pure []
         Right statements -> pure statements
+    let controllerName = tableNameToControllerName rawControllerName
+    let modelName = tableNameToModelName rawControllerName
+    pure $ Right $ buildPlan' schema applicationName controllerName modelName
 
-    pure case normalizeControllerName appAndControllerName of
-        Right [applicationName, controllerName'] -> Right $ buildPlan' schema (ucfirst applicationName) controllerName'
-        Right [controllerName'] -> Right $ buildPlan' schema "Web" controllerName'
-        Left error -> Left error
-
-buildPlan' schema applicationName controllerName' =
+buildPlan' schema applicationName controllerName modelName =
     let
-        modelName = tableNameToModelName controllerName'
-        controllerName = Countable.pluralize modelName
         config = ControllerConfig { modelName, controllerName, applicationName }
+        viewPlans = generateViews schema applicationName controllerName
     in
         [ CreateFile { filePath = applicationName <> "/Controller/" <> controllerName <> ".hs", fileContent = (generateController schema config) }
-        , AppendToFile { filePath = applicationName <> "/Routes.hs", fileContent = (controllerInstance config) }
+        , AppendToFile { filePath = applicationName <> "/Routes.hs", fileContent = "\n" <> (controllerInstance config) }
         , AppendToFile { filePath = applicationName <> "/Types.hs", fileContent = (generateControllerData config) }
         , AppendToMarker { marker = "-- Controller Imports", filePath = applicationName <> "/FrontController.hs", fileContent = ("import " <> applicationName <> ".Controller." <> controllerName) }
         , AppendToMarker { marker = "-- Generator Marker", filePath = applicationName <> "/FrontController.hs", fileContent = ("        , parseRoute @" <> controllerName <> "Controller") }
         ]
-        <> generateViews schema config
+        <> viewPlans
 
 data ControllerConfig = ControllerConfig
-    { controllerName :: Text 
+    { controllerName :: Text
     , applicationName :: Text
     , modelName :: Text
     } deriving (Eq, Show)
 
 controllerInstance :: ControllerConfig -> Text
 controllerInstance ControllerConfig { controllerName, modelName, applicationName } =
-    "instance AutoRoute " <> controllerName <> "Controller\n"
-    <> "type instance ModelControllerMap " <> applicationName <> "Application " <> modelName <> " = " <> controllerName <> "Controller\n\n"
+    "instance AutoRoute " <> controllerName <> "Controller\n\n"
 
 data HaskellModule = HaskellModule { moduleName :: Text, body :: Text }
-
-getTable :: [Statement] -> Text -> Maybe Statement
-getTable schema name = find isTable schema
-    where
-        isTable :: Statement -> Bool
-        isTable table@(CreateTable { name = name' }) | name == name' = True
-        isTable _ = False
-
-fieldsForTable :: [Statement] -> Text -> [Text]
-fieldsForTable database name =
-    case getTable database name of
-        Just (CreateTable { columns }) -> columns
-                |> filter (\col -> isNothing (get #defaultValue col))
-                |> map (get #name)
-                |> map columnNameToFieldName
-        Nothing -> []
-
 
 generateControllerData :: ControllerConfig -> Text
 generateControllerData config =
     let
+        pluralName = Countable.pluralize $ get #controllerName config
         name = get #controllerName config
         singularName = get #modelName config
         idFieldName = lcfirst singularName <> "Id"
         idType = "Id " <> singularName
-    in 
+    in
         "\n"
         <> "data " <> name <> "Controller\n"
-        <> "    = " <> name <> "Action\n"
+        <> "    = " <> pluralName <> "Action\n"
         <> "    | New" <> singularName <> "Action\n"
         <> "    | Show" <> singularName <> "Action { " <> idFieldName <> " :: !(" <> idType <> ") }\n"
         <> "    | Create" <> singularName <> "Action\n"
@@ -108,6 +76,7 @@ generateController schema config =
     let
         applicationName = get #applicationName config
         name = config |> get #controllerName
+        pluralName = Countable.pluralize $ get #controllerName config
         singularName = config |> get #modelName
         moduleName =  applicationName <> ".Controller." <> name
         controllerName = name <> "Controller"
@@ -127,7 +96,7 @@ generateController schema config =
         model = ucfirst singularName
         indexAction =
             ""
-            <> "    action " <> name <> "Action = do\n"
+            <> "    action " <> pluralName <> "Action = do\n"
             <> "        " <> modelVariablePlural <> " <- query @" <> model <> " |> fetch\n"
             <> "        render IndexView { .. }\n"
 
@@ -150,13 +119,13 @@ generateController schema config =
             <> "        render EditView { .. }\n"
 
         modelFields :: [Text]
-        modelFields = fieldsForTable schema modelVariablePlural
+        modelFields = fieldsForTable schema (modelNameToTableName modelVariableSingular)
 
         updateAction =
             ""
             <> "    action Update" <> singularName <> "Action { " <> idFieldName <> " } = do\n"
             <> "        " <> modelVariableSingular <> " <- fetch " <> idFieldName <> "\n"
-            <> "        " <> modelVariableSingular <> "\n" 
+            <> "        " <> modelVariableSingular <> "\n"
             <> "            |> build" <> singularName <> "\n"
             <> "            |> ifValid \\case\n"
             <> "                Left " <> modelVariableSingular <> " -> render EditView { .. }\n"
@@ -169,14 +138,14 @@ generateController schema config =
             ""
             <> "    action Create" <> singularName <> "Action = do\n"
             <> "        let " <> modelVariableSingular <> " = newRecord @"  <> model <> "\n"
-            <> "        " <> modelVariableSingular <> "\n" 
+            <> "        " <> modelVariableSingular <> "\n"
             <> "            |> build" <> singularName <> "\n"
             <> "            |> ifValid \\case\n"
             <> "                Left " <> modelVariableSingular <> " -> render NewView { .. } \n"
             <> "                Right " <> modelVariableSingular <> " -> do\n"
             <> "                    " <> modelVariableSingular <> " <- " <> modelVariableSingular <> " |> createRecord\n"
             <> "                    setSuccessMessage \"" <> model <> " created\"\n"
-            <> "                    redirectTo " <> name <> "Action\n"
+            <> "                    redirectTo " <> pluralName <> "Action\n"
 
         deleteAction =
             ""
@@ -184,7 +153,7 @@ generateController schema config =
             <> "        " <> modelVariableSingular <> " <- fetch " <> idFieldName <> "\n"
             <> "        deleteRecord " <> modelVariableSingular <> "\n"
             <> "        setSuccessMessage \"" <> model <> " deleted\"\n"
-            <> "        redirectTo " <> name <> "Action\n"
+            <> "        redirectTo " <> pluralName <> "Action\n"
 
         fromParams =
             ""
@@ -218,131 +187,27 @@ generateController schema config =
 -- E.g. qualifiedViewModuleName config "Edit" == "Web.View.Users.Edit"
 qualifiedViewModuleName :: ControllerConfig -> Text -> Text
 qualifiedViewModuleName config viewName =
-    get #applicationName config <> ".View." <> Countable.pluralize (get #controllerName config) <> "." <> viewName
+    get #applicationName config <> ".View." <> get #controllerName config <> "." <> viewName
 
 pathToModuleName :: Text -> Text
 pathToModuleName moduleName = Text.replace "." "/" moduleName
 
-generateViews :: [Statement] -> ControllerConfig -> [GeneratorAction]
-generateViews schema config =
-        let
-            name = config |> get #controllerName
-            singularName = config |> get #modelName --Post
-            singularVariableName = lcfirst singularName --post
-            pluralVariableName = lcfirst name --posts
-
-            viewHeader moduleName =
-                ""
-                <> "module " <> qualifiedViewModuleName config moduleName <> " where\n"
-                <> "import " <> get #applicationName config <> ".View.Prelude\n"
-                <> "\n"
-
-
-            indexAction = Countable.pluralize singularName <> "Action"
-
-            modelFields :: [Text]
-            modelFields = fieldsForTable schema pluralVariableName
-
-            showView = 
-                viewHeader "Show"
-                <> "data ShowView = ShowView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
-                <> "\n"
-                <> "instance View ShowView ViewContext where\n"
-                <> "    html ShowView { .. } = [hsx|\n"
-                <> "        <nav>\n"
-                <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
-                <> "                <li class=\"breadcrumb-item active\">Show " <> singularName <> "</li>\n"
-                <> "            </ol>\n"
-                <> "        </nav>\n"
-                <> "        <h1>Show " <> singularName <> "</h1>\n"
-                <> "    |]\n"
-
-            newView = 
-                viewHeader "New"
-                <> "data NewView = NewView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
-                <> "\n"
-                <> "instance View NewView ViewContext where\n"
-                <> "    html NewView { .. } = [hsx|\n"
-                <> "        <nav>\n"
-                <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
-                <> "                <li class=\"breadcrumb-item active\">Edit " <> singularName <> "</li>\n"
-                <> "            </ol>\n"
-                <> "        </nav>\n"
-                <> "        <h1>New " <> singularName <> "</h1>\n"
-                <> "        {renderForm " <> singularVariableName <> "}\n"
-                <> "    |]\n"
-                <> "\n"
-                <> "renderForm :: " <> singularName <> " -> Html\n"
-                <> "renderForm " <> singularVariableName <> " = formFor " <> singularVariableName <> " [hsx|\n"
-                <> (intercalate "\n" (map (\field -> "    {textField #" <> field <> "}") modelFields)) <> "\n"
-                <> "    {submitButton}\n"
-                <> "|]\n"
-
-            editView = 
-                viewHeader "Edit"
-                <> "data EditView = EditView { " <> singularVariableName <> " :: " <> singularName <> " }\n"
-                <> "\n"
-                <> "instance View EditView ViewContext where\n"
-                <> "    html EditView { .. } = [hsx|\n"
-                <> "        <nav>\n"
-                <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
-                <> "                <li class=\"breadcrumb-item active\">Edit " <> singularName <> "</li>\n"
-                <> "            </ol>\n"
-                <> "        </nav>\n"
-                <> "        <h1>Edit " <> singularName <> "</h1>\n"
-                <> "        {renderForm " <> singularVariableName <> "}\n"
-                <> "    |]\n"
-                <> "\n"
-                <> "renderForm :: " <> singularName <> " -> Html\n"
-                <> "renderForm " <> singularVariableName <> " = formFor " <> singularVariableName <> " [hsx|\n"
-                <> (intercalate "\n" (map (\field -> "    {textField #" <> field <> "}") modelFields)) <> "\n"
-                <> "    {submitButton}\n"
-                <> "|]\n"
-
-            indexView = 
-                viewHeader "Index"
-                <> "data IndexView = IndexView { " <> pluralVariableName <> " :: [" <> singularName <> "] }\n"
-                <> "\n"
-                <> "instance View IndexView ViewContext where\n"
-                <> "    html IndexView { .. } = [hsx|\n"
-                <> "        <nav>\n"
-                <> "            <ol class=\"breadcrumb\">\n"
-                <> "                <li class=\"breadcrumb-item active\"><a href={" <> indexAction <> "}>" <> Countable.pluralize name <> "</a></li>\n"
-                <> "            </ol>\n"
-                <> "        </nav>\n"
-                <> "        <h1>" <> name <> " <a href={pathTo New" <> singularName <> "Action} class=\"btn btn-primary ml-4\">+ New</a></h1>\n"
-                <> "        <table class=\"table table-responsive\">\n"
-                <> "            <thead>\n"
-                <> "                <tr>\n"
-                <> "                    <th>" <> singularName <> "</th>\n"
-                <> "                    <th></th>\n"
-                <> "                </tr>\n"
-                <> "            </thead>\n"
-                <> "            <tbody>{forEach " <> pluralVariableName <> " render" <> singularName <> "}</tbody>\n"
-                <> "        </table>\n"
-                <> "    |]\n"
-                <> "\n\n"
-                <> "render" <> singularName <> " " <> singularVariableName <> " = [hsx|\n"
-                <> "    <tr>\n"
-                <> "        <td>{" <> singularVariableName <> "}</td>\n"
-                <> "        <td><a href={Show" <> singularName <> "Action (get #id " <> singularVariableName <> ")}>Show</a></td>\n"
-                <> "        <td><a href={Edit" <> singularName <> "Action (get #id " <> singularVariableName <> ")} class=\"text-muted\">Edit</a></td>\n"
-                <> "        <td><a href={Delete" <> singularName <> "Action (get #id " <> singularVariableName <> ")} class=\"js-delete text-muted\">Delete</a></td>\n"
-                <> "    </tr>\n"
-                <> "|]\n"
-        in
-            [ EnsureDirectory { directory = get #applicationName config <> "/View/" <> name }
-            , CreateFile { filePath = get #applicationName config <> "/View/" <> name <> "/Show.hs", fileContent = showView }
-            , CreateFile { filePath = get #applicationName config <> "/View/" <> name <> "/New.hs", fileContent = newView }
-            , CreateFile { filePath = get #applicationName config <> "/View/" <> name <> "/Edit.hs", fileContent = editView }
-            , CreateFile { filePath = get #applicationName config <> "/View/" <> name <> "/Index.hs", fileContent = indexView }
-            ]
-
+generateViews :: [Statement] -> Text -> Text -> [GeneratorAction]
+generateViews schema applicationName controllerName' =
+    if null controllerName'
+        then []
+        else do
+            let indexPlan = ViewGenerator.buildPlan' schema (config "IndexView")
+            let newPlan = ViewGenerator.buildPlan' schema (config "NewView")
+            let showPlan = ViewGenerator.buildPlan' schema (config "ShowView")
+            let editPlan = ViewGenerator.buildPlan' schema (config "EditView")
+            indexPlan <> newPlan <> showPlan <> editPlan
+    where
+        config viewName = do
+            let modelName = tableNameToModelName controllerName'
+            let controllerName = tableNameToControllerName controllerName'
+            ViewGenerator.ViewConfig { .. }
 
 
 isAlphaOnly :: Text -> Bool
 isAlphaOnly text = Text.all (\c -> Char.isAlpha c || c == '_') text
-

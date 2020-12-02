@@ -1,13 +1,28 @@
 #!/bin/bash -e
-echo "$(readlink "$(which "$0")")"
-BIN_DIR="$(dirname "$(readlink "$(which "$0")")")"
-LIB_DIR="$BIN_DIR/../lib"
+readlink "$(command -v "$0")" || echo
+NIXPKGS_ATTR="nixpkgs"
+
+if [ -f /etc/os-release ]; then
+	grep '^ID=nixos$' /etc/os-release >/dev/null 2>&1 && NIXPKGS_ATTR="nixos"
+fi
+
 
 BOILERPLATE_GIT_URL="https://github.com/digitallyinduced/ihp-boilerplate.git"
 
 if [ "$#" -ne "1" ]; then
 	echo "Usage: ihp-new PROJECT_NAME"
 	exit 1
+fi
+
+if [[ "$1" == "--help" ]]; then
+	echo "Usage: ihp-new PROJECT_NAME";
+	echo "Generates an empty IHP project";
+	echo "";
+	echo "Full documentation: https://ihp.digitallyinduced.com/Guide/installation.html"
+	echo "Project template: $BOILERPLATE_GIT_URL"
+	echo ""
+	echo "In case there already exists a directory named like the given project name, this script will stop execution.";
+	exit 0
 fi
 
 PROJECT_NAME=$1
@@ -23,17 +38,17 @@ if ! [ -x "$(command -v direnv)" ]; then
 	echo ""
 	echo ""
 	echo -e "\e[1mWe will install direnv for you now. Continue? (Type y to proceed) \e[0m"
-	read -n1 choice
+	read -r -n1 choice
 	echo ""
 	case "$choice" in
-	  y|Y ) nix-env -i direnv;;
+	  y|Y ) nix-env -iA ${NIXPKGS_ATTR}.direnv;;
 	  * ) echo -e "\e[31mPlease install direnv manually and then re-run this program.\e[0m"; exit 1;;
 	esac
 	echo -e "\e[1mDirenv needs to be hooked into your shell. Please follow the steps below:\e[0m"
 	echo "Bash: Add \e[4meval \"\$(direnv hook bash)\"\e[0m to ~/.bashrc"
 	echo "ZSH: Add \e[4meval \"\$(direnv hook zsh)\"\e[0m to ~/.zshrc"
 	echo "Other shells: See https://direnv.net/#README"
-	read -p "Have you done this step?" -n1 choice
+	read -r -p "Have you done this step?" -n1 choice
 	case "$choice" in
 	  y|Y ) echo "Great!";;
 	  * ) echo -e "\e[31mPlease make sure direnv is set up correctly and then re-run this program. See https://direnv.net/#README for help.\e[0m"; exit 1;;
@@ -47,10 +62,10 @@ if ! [ -x "$(command -v cachix)" ]; then
 	echo ""
 	echo ""
 	echo -e "\e[1mWe will install cachix for you now. Continue? (Type y to proceed) \e[0m"
-	read -n1 choice
+	read -r -n1 choice
 	echo ""
 	case "$choice" in
-	  y|Y ) nix-env -i cachix;;
+	  y|Y ) nix-env -iA ${NIXPKGS_ATTR}.cachix;;
 	  * ) echo -e "\e[31mPlease install cachix manually and then re-run this program.\e[0m"; exit 1;;
 	esac
 fi
@@ -61,10 +76,10 @@ if ! [ -x "$(command -v git)" ]; then
 	echo ""
 	echo ""
 	echo -e "\e[1mWe will install git for you now using 'nix-env -i git'. Continue? (Type y to proceed) \e[0m"
-	read -n1 choice
+	read -r -n1 choice
 	echo ""
 	case "$choice" in
-	  y|Y ) nix-env -i git;;
+	  y|Y ) nix-env -iA ${NIXPKGS_ATTR}.git;;
 	  * ) echo -e "\e[31mPlease install git manually and then re-run this program.\e[0m"; exit 1;;
 	esac
 fi
@@ -75,22 +90,23 @@ if ! [ -x "$(command -v make)" ]; then
 	echo ""
 	echo ""
 	echo -e "\e[1mWe will install make for you now using 'nix-env -i gnumake'. Continue? (Type y to proceed) \e[0m"
-	read -n1 choice
+	read -r -n1 choice
 	echo ""
 	case "$choice" in
-	  y|Y ) nix-env -i gnumake;;
+	  y|Y ) nix-env -iA ${NIXPKGS_ATTR}.gnumake;;
 	  * ) echo -e "\e[31mPlease install make manually and then re-run this program.\e[0m"; exit 1;;
 	esac
 fi
 
-echo "We now create your project. This may take up to 30 seconds."
+echo "We will now create your project. This may take up to 30 seconds."
 grep -s -q "digitallyinduced.cachix.org-1:y+wQvrnxQ+PdEsCt91rmvv39qRCYzEgGQaldK26hCKE=" ~/.config/nix/nix.conf || {
 	cachix use digitallyinduced
 }
 
-git clone --quiet --depth=1 "$BOILERPLATE_GIT_URL" "$PROJECT_NAME"
+git clone --quiet --depth=1 "$BOILERPLATE_GIT_URL" -- "$PROJECT_NAME"
 cd "$PROJECT_NAME"
 rm -rf ".git"
+chmod go-w .ghci || true
 
 nix-shell -j auto --cores 0 --quiet --run 'make -s all; new-application Web'
 echo "🚀 Project created, happy coding :)"

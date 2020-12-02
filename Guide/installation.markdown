@@ -7,12 +7,12 @@
 
 The framework uses the nix package manager to manage the whole set of dependencies of your application
 
-For example, postgresql and the haskell compiler are both dependencies of your app, as well as all the haskell or javascript packages you want to use. We use nix to make sure that these dependencies are available to the app - in development, as well as in production.
+For example, postgresql and the Haskell compiler are both dependencies of your app, as well as all the Haskell or javascript packages you want to use. We use nix to make sure that these dependencies are available to the app - in development, as well as in production.
 
 That's why we first need to make sure that you have nix installed.
 
 ### Mac
-Run this commands in your terminal to install nix on your machine.
+Run this command in your terminal to install nix on your machine.
 
 ```bash
 sh <(curl -L https://nixos.org/nix/install) --darwin-use-unencrypted-nix-store-volume
@@ -53,18 +53,18 @@ Running nix on Windows requires the Windows Subsystem for Linux, which first nee
 dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
 ```
 
-Enabling this Feature needs a restart.
+Enabling this Feature needs a restart (even though it won't prompt, and the command-line says /norestart).
 
 To download a Linux Distribution, open the Microsoft Store and search for Ubuntu or Debian. We recommend Ubuntu, since it works best with nix on Windows.
 
 Note: You **do not** need a Microsoft account to download. You can simply cancel or close the login forms and the download will continue.
 
-With the Distro Downloaded, run it and update it using your package manager. In Ubuntu you would use:
+With the Distro downloaded, run it and update it using your package manager. In Ubuntu you would use:
 
 ```bash
 sudo apt update
 sudo apt upgrade
-sudo apt install git curl make -y
+sudo apt install git curl make xdg-utils -y
 ```
 
 WSL will add your Windows System Paths in your Linux Subsystem. These tend to generate errors due to spaces and brackets in folder names. Also, due to Linux not loading the `.profile`, we need to add the nix.sh manually. To fix these two issues, just add these lines to the end of your `.bashrc`
@@ -79,7 +79,7 @@ Now, create a folder for nix:
 sudo mkdir -p /etc/nix
 ```
 
-To make nix usable on Windows, we need to create and add the following lines to the file `/etc/nix/nix.conf`:
+To make nix usable on Windows, we need to create and add the following lines to the file `/etc/nix/nix.conf` (requires use of sudo again):
 
 ```bash
 sandbox = false
@@ -102,12 +102,14 @@ When using Windows, you will be asked if tasks like ghc-iserv or rundevserver sh
 
 Installing nix for IHP was done using [this guide](https://nathan.gs/2019/04/12/nix-on-windows/).
 
+Note that nix can gradually grow to use several GB of disk space, especially after upgrading IHP. You can always run `nix-collect-garbage` in a `nix-shell` which will delete older/unused files.
+
 ## 2. Installing IHP
 
 You can now install IHP by running:
 
 ```bash
-nix-env -f https://beta:beta@ihp.digitallyinduced.com/ihp-new.tar.gz -i ihp-new
+nix-env -f https://ihp.digitallyinduced.com/ihp-new.tar.gz -i ihp-new
 ```
 
 If you don't already use cachix, you will be prompted to install it. You don't need it, but it is highly recommended, as it reduces build time dramatically. Learn more about cachix [here](https://cachix.org/).

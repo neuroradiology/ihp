@@ -5,7 +5,7 @@
 
 ## Routing Basics
 
-In your project routes are defined in the `Web/Routes.hs`. Additionally to the defining a route, it also has to be added in `Web/FrontController.hs` to be picked up by the routing system.
+In your project routes are defined in the `Web/Routes.hs`. In addition to defining that route, it also has to be added in `Web/FrontController.hs` to be picked up by the routing system.
 
 The simplest way to define a route is by using `AutoRoute`, which automatically maps each controller action to an url. For a `PostsController`, the definition in `Web/Routes.hs` will look like this:
 
@@ -25,6 +25,20 @@ instance FrontController WebApplication where
 ```
 
 Now you can open e.g. `/Posts` to access the `PostsAction`.
+
+## Changing the Start Page / Home Page
+
+You can define a custom start page action using the `startPage` function like this:
+
+```haskell
+instance FrontController WebApplication where
+    controllers = 
+        [ startPage ProjectsAction
+        -- Generator Marker
+        ]
+```
+
+In a new IHP project, you usually have a `startPage WelcomeAction` defined. Make sure to remove this line. Otherwise you will still see the default IHP welcome page.
 
 ## Url Generation
 
@@ -81,7 +95,7 @@ Lots of modern browser don't even show the full url bar anymore (e.g. Safari and
 An action constructor can have multiple parameters:
 
 ```haskell
-data PostsController = EditPostAction { postId :: !(Id Post), userId :: !(Id Post) }
+data PostsController = EditPostAction { postId :: !(Id Post), userId :: !(Id User) }
 ```
 
 This will generate a routing like:
@@ -101,10 +115,19 @@ instance AutoRoute HelloWorldController where
 
 This way the `name` argument is passed as `Text` instead of `UUID`.
 
+**This also works with integer types:**
+
+```haskell
+instance AutoRoute HelloWorldController where
+    parseArgument = parseIntArgument
+```
+
+This will support a controller like `data HelloWorldController = HelloAction { page :: Int }`.
+
 Right now AutoRoute supports only a single type for all given parameters. E.g. an action which takes an UUID and a Text is not supported with AutoRoute right now:
 ```haskell
 data HelloController = HelloAction { userId :: !(Id User), name :: Text }
-instance AutRoute HelloController -- This will fail at runtime
+instance AutoRoute HelloController -- This will fail at runtime
 ```
 
 This is a technical problem we hope to fix in the future. Until then consider using `param` for the `Text` parameter.
@@ -130,7 +153,7 @@ instance AutoRoute HelloWorldController where
 
 ### Application Prefix
 
-When using multiple application in your IHP project, e.g. having an admin backend, AutoRoute will prefix the action urls with the application name. E.g. a controller `HelloWorldController` defined in `Admin/Types.hs` will be automatically prefixed with `/admin` and generate urls such as `/admin/HelloAction`.
+When using multiple applications in your IHP project, e.g. having an admin backend, AutoRoute will prefix the action urls with the application name. E.g. a controller `HelloWorldController` defined in `Admin/Types.hs` will be automatically prefixed with `/admin` and generate urls such as `/admin/HelloAction`.
 
 This prefixing has special handling for the `Web` module, so that all controllers in the default `Web` module don't have a prefix.
 
@@ -150,7 +173,7 @@ MyAction?{firstArgument}={secondArgument}
 
 The last argument `d` cannot be implemented in a typesafe way. This is implemented by calling `unsafeCoerce` on our result value before returning it. The result of this is later used with [`fromConstrM`](http://hackage.haskell.org/package/base-4.14.0.0/docs/Data-Data.html#fromConstrM). Therefore misusing `parseArgument` can result in a runtime crash. Again, consider not using this API.
 
-Given we have a custom argument type in the format `ID-{numeric}` like `ID-0`, `ID-1`, etc. We can define a custom `parseCustomIdArgument` like this:
+Given we have a custom argument type in the format `ID-{numeric}` like `ID-0`, `ID-1`, etc, we can define a custom `parseCustomIdArgument` like this:
 
 ```haskell
 import qualified Data.Attoparsec.ByteString.Char8 as Attoparsec
@@ -169,9 +192,9 @@ parseCustomIdArgument field value =
 
 ## Custom Routing
 
-Sometimes you have special needs for your routing. For this case IHP provides a lower-level routing API on which `AutoRoute` is built on.
+Sometimes you have special needs for your routing. For this case IHP provides a lower-level routing API on which `AutoRoute` is built.
 
-Let's say we have controller like this:
+Let's say we have a controller like this:
 
 ```haskell
 data PostsController = ShowAllMyPostsAction
@@ -281,3 +304,7 @@ instance HasPath RegistrationsController where
 ## Method Override Middleware
 
 HTML forms don't support special http methods like `DELETE`. To work around this issue, IHP has [a middleware](https://hackage.haskell.org/package/wai-extra-3.0.1/docs/Network-Wai-Middleware-MethodOverridePost.html) which transforms e.g. a `POST` request with a form field `_method` set to `DELETE` to a `DELETE` request.
+
+## Custom 404 Page
+
+You can override the default IHP 404 Not Found error page by creating a new file at `static/404.html`. Then IHP will render that HTML file instead of displaying the default IHP not found page.

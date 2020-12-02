@@ -7,7 +7,7 @@
 
 In IHP Forms are an essential way to interact with your application. Dealing with a lot of form markup can quickly become complex because of the need to deal with consistent styling and especially when dealing with lots of validation. IHP provides helpers to generate form markup to help you deal with the complexity.
 
-By default forms in IHP follows the class names used by Bootstrap 4. Therefore the forms work with Bootstrap 4 out of the box. Of course the default form generation can be customized to support other CSS frameworks.
+By default forms in IHP follow the class names used by Bootstrap 4. Therefore the forms work with Bootstrap 4 out of the box. Of course the default form generation can be customized to support other CSS frameworks.
 
 Unless javascript helpers have been deactivated, your form will be submitted using AJAX and TurboLinks instead of a real browser based form submission.
 
@@ -48,7 +48,7 @@ All inputs have auto-generated class names and ids for styling. Also all `name` 
 
 ## Form Controls
 
-IHP has the most commonly used form controls built in. In general the form control helpers just need to be passed the field name. Here is a list of all built-in form control helpers:
+IHP has the most commonly-used form controls built in. In general the form control helpers just need to be passed the field name. Here is a list of all built-in form control helpers:
 
 ```html
 {textField #title}
@@ -58,6 +58,7 @@ IHP has the most commonly used form controls built in. In general the form contr
 {dateField #dueAt}
 {passwordField #password}
 {dateTimeField #createdAt}
+{numberField #quantity}
 {hiddenField #projectId}
 {checkboxField #termsAccepted}
 {selectField #projectId allProjects}
@@ -281,7 +282,7 @@ This will render like:
 
 Using the `fieldInput`, which is passed as an argument, you can access the other options of the form. Don't set the `class` attribute on your custom field input, as this will break rendering.
 
-#### Cutom name attribute
+#### Custom name attribute
 
 By default the field name is used for the `name` attribute of the input element. You can override it like this:
 
@@ -299,7 +300,7 @@ This will render like:
 </div>
 ```
 
-#### Cutom id attribute
+#### Custom id attribute
 
 You can override the auto-generated id value like this:
 
@@ -335,7 +336,7 @@ Will render as:
 
 #### Don't render `<div class="form-group">`
 
-You can specifiy `disableGroup` to stop the outter `<div class="form-group">` element from being generated:
+You can specifiy `disableGroup` to stop the outer `<div class="form-group">` element from being generated:
 
 ```html
 {(textField #title) { disableGroup = True }
@@ -357,7 +358,7 @@ You can specify `disableValidationResult` to stop the validation error message b
 ```
 
 
-This works out of the box for most haskell data types. When you are working with a custom data type, e.g. a custom enum value, you need to add a `InputValue MyDataType` implementation. We will cover this later in this Guide.
+This works out of the box for most Haskell data types. When you are working with a custom data type, e.g. a custom enum value, you need to add a `InputValue MyDataType` implementation. We will cover this later in this Guide.
 
 ## Select Inputs
 
@@ -394,6 +395,41 @@ Given the above example, the rendered form will look like this:
 </form>
 ```
 
+If you want a certain value to be preselected, set the value in the controller. For example, to have the first user be preselected in the above example:
+
+```haskell
+    action NewProjectAction = do
+        users <- query @User |> fetch
+        let userId = headMay users |> maybe def (get #id)
+        let target = newRecord @Project |> set #userId userId
+        render NewView { .. }
+```
+
+
+### Select Inputs with Custom Enums
+
+You can use select fields with custom defined enums too.
+
+Given an enum like this:
+
+```sql
+CREATE TYPE CONTENT_TYPE AS ENUM ('video', 'article', 'audio');
+```
+
+We need to define a `CanSelect ContentType` like this:
+
+```haskell
+instance CanSelect ContentType where
+    type SelectValue ContentType = ContentType
+    selectValue value = value
+    
+    selectLabel Video = "Video"
+    selectLabel Article = "Article"
+    selectLabel Audio = "Audio"
+    -- You can also use the following shortcut: selectLabel = tshow
+```
+
+
 ## Advanced Forms
 
 You can get very far with the built-in form helpers. But sometimes you might need a very custom functionality which is not easily doable with the form helpers. In this case we highly recommend to not use the form helpers for that specific case. Don't fight the tools.
@@ -406,22 +442,28 @@ IHP by default sets its session cookies using the Lax [SameSite](https://develop
 
 By default your form will be submitted using AJAX and [TurboLinks](https://github.com/turbolinks/turbolinks) instead of a real browser based form submission. It's implemented this way to support [SPA](https://en.wikipedia.org/wiki/Single-page_application)-like page transitions using TurboLinks and [morphdom](https://github.com/patrick-steele-idem/morphdom).
 
-Additional to integrate the form submission into TurboLinks, the javascript helpers will also disable the form submit button after the form has been submitted. Also any flash messages inside the form are removed.
+Additionally to integrate the form submission into TurboLinks, the javascript helpers will also disable the form submit button after the form has been submitted. Also any flash messages inside the form are removed.
 
 When the IHP javascript helpers are included in a page, it will automatically hook into your form submissions. You can also call `window.submitForm(formElement)` to trigger a form submission from javascript.
 
 
-The form helpers are designed to improve the User Experience for browser where javascript is enabled. In case javascript is not enabled or blocked by a plugin, the form submission will still work as expected.
+The form helpers are designed to improve the User Experience for browsers where javascript is enabled. In case javascript is not enabled or blocked by a plugin, the form submission will still work as expected.
 
 You can disable the form helpers by removing the IHP javascript helpers from your layout. In `Web/View/Layout.hs` remove the following line:
 ```html
 <script src="/helpers.js"></script>
 ```
 
-This way no special behavior will be attach to your forms.
+This way no special behavior will be attached to your forms.
 
 To dig deeper into the javascript, [take a look at the source in helpers.js](https://github.com/digitallyinduced/ihp/blob/master/lib/IHP/static/helpers.js#L115).
 
+
+## Working within the Bootstrap CSS framework
+
+While the default forms layout is vertical with one field per line, it is easy to change. Bootstrap's excellent [forms documentation](https://getbootstrap.com/docs/4.4/components/forms/) shows how.
+
+
 ## Working with other CSS Frameworks
 
-TODO: This section still has to be implemented. The gist of how rendering can be completly overriden to support a different layout or CSS framework can be found in the implementation of [horizontalFormFor](https://ihp.digitallyinduced.com/api-docs/IHP-View-Form.html#v:horizontalFormFor) (renders a bootstrap 4 form in a horizontal way).
+TODO: This section still has to be implemented. The gist of how rendering can be completely overriden to support a different layout or CSS framework can be found in the implementation of [horizontalFormFor](https://ihp.digitallyinduced.com/api-docs/IHP-View-Form.html#v:horizontalFormFor) (renders a bootstrap 4 form in a horizontal way).

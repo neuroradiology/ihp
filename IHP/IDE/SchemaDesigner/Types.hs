@@ -8,9 +8,9 @@ module IHP.IDE.SchemaDesigner.Types where
 import IHP.Prelude
 
 data Statement
-    = 
+    =
     -- | CREATE TABLE name ( columns );
-    CreateTable { name :: Text, columns :: [Column] }
+      StatementCreateTable { unsafeGetCreateTable :: CreateTable }
     -- | CREATE TYPE name AS ENUM ( values );
     | CreateEnumType { name :: Text, values :: [Text] }
     -- | CREATE EXTENSION IF NOT EXISTS "name";
@@ -21,10 +21,18 @@ data Statement
     | Comment { content :: Text }
     deriving (Eq, Show)
 
+data CreateTable
+  = CreateTable
+      { name :: Text
+      , columns :: [Column]
+      , primaryKeyConstraint :: PrimaryKeyConstraint
+      , constraints :: [Constraint]
+      }
+  deriving (Eq, Show)
+
 data Column = Column
     { name :: Text
     , columnType :: PostgresType
-    , primaryKey :: Bool
     , defaultValue :: Maybe Expression
     , notNull :: Bool
     , isUnique :: Bool
@@ -35,8 +43,13 @@ data OnDelete
     = NoAction
     | Restrict
     | SetNull
+    | SetDefault
     | Cascade
     deriving (Show, Eq)
+
+newtype PrimaryKeyConstraint
+  = PrimaryKeyConstraint { primaryKeyColumnNames :: [Text] }
+  deriving (Eq, Show)
 
 data Constraint
     -- | FOREIGN KEY (columnName) REFERENCES referenceTable (referenceColumn) ON DELETE onDelete;
@@ -46,6 +59,8 @@ data Constraint
         , referenceColumn :: Maybe Text
         , onDelete :: Maybe OnDelete
         }
+    | UniqueConstraint
+        { columnNames :: [Text] }
     deriving (Eq, Show)
 
 data Expression =
@@ -67,11 +82,16 @@ data PostgresType
     | PTimestamp
     | PReal
     | PDouble
+    | PPoint
     | PDate
     | PBinary
     | PTime
     | PNumeric { precision :: Maybe Int, scale :: Maybe Int }
     | PVaryingN Int
     | PCharacterN Int
+    | PSerial
+    | PBigserial
+    | PJSONB
+    | PArray PostgresType
     | PCustomType Text
     deriving (Eq, Show)

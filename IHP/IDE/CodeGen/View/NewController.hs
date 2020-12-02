@@ -5,7 +5,6 @@ import IHP.IDE.SchemaDesigner.Types
 import IHP.IDE.CodeGen.Types
 import IHP.IDE.ToolServer.Types
 import IHP.IDE.ToolServer.Layout
-import IHP.View.Modal
 import IHP.IDE.SchemaDesigner.View.Layout
 import qualified IHP.IDE.CodeGen.ControllerGenerator as ControllerGenerator
 import qualified Data.Text as Text
@@ -14,9 +13,11 @@ import IHP.IDE.CodeGen.View.Generators (renderPlan)
 data NewControllerView = NewControllerView
     { plan :: Either Text [GeneratorAction]
     , controllerName :: Text
+    , applicationName :: Text
+    , applications :: [Text]
     }
 
-instance View NewControllerView ViewContext where
+instance View NewControllerView where
     html NewControllerView { .. } = [hsx|
         <div class="generators">
             {renderFlashMessages}
@@ -30,16 +31,16 @@ instance View NewControllerView ViewContext where
     |]
         where
             renderEmpty = [hsx|<form method="POST" action={NewControllerAction} class="d-flex">
-                    <input
-                        type="text"
-                        name="name"
-                        placeholder="Controller name"
-                        class="form-control"
-                        autofocus="autofocus"
-                        value={controllerName}
-                        />
-
-                    <button class="btn btn-primary" type="submit">Preview</button>
+                        {when (length applications /= 1) renderApplicationSelector}
+                        <input
+                            type="text"
+                            name="name"
+                            placeholder="Controller name"
+                            class="form-control"
+                            autofocus="autofocus"
+                            value={controllerName}
+                            />
+                        <button class="btn btn-primary" type="submit">Preview</button>
                 </form>|]
 
             renderPreview = [hsx|
@@ -47,10 +48,18 @@ instance View NewControllerView ViewContext where
                     <div class="object-name flex-grow-1">{controllerName}</div>
 
                     <input type="hidden" name="name" value={controllerName}/>
+                    <input type="hidden" name="applicationName" value={applicationName}/>
 
                     <button class="btn btn-primary" type="submit">Generate</button>
                 </form>
             |]
-
-
+            renderApplicationOptions = forM_ applications (\x -> [hsx|<option selected={x == applicationName}>{x}</option>|])
+            renderApplicationSelector = [hsx|
+                <select
+                    name="applicationName"
+                    class="form-control select2-simple"
+                    size="1"
+                >
+                    {renderApplicationOptions}
+                </select>|]
             isEmpty = null controllerName

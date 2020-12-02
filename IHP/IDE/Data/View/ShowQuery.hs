@@ -4,7 +4,6 @@ import IHP.ViewPrelude
 import IHP.IDE.SchemaDesigner.Types
 import IHP.IDE.ToolServer.Types
 import IHP.IDE.ToolServer.Layout
-import IHP.View.Modal
 import IHP.IDE.SchemaDesigner.View.Layout
 import IHP.IDE.ToolServer.Types
 import IHP.IDE.Data.View.ShowDatabase
@@ -15,15 +14,15 @@ data ShowQueryView = ShowQueryView
     , query :: Text
     }
 
-instance View ShowQueryView ViewContext where
+instance View ShowQueryView where
     html ShowQueryView { .. } = [hsx|
-        <div class="container pt-5">
-            {customQuery query}
+        <div class="mx-2 pt-5">
             <div class="row no-gutters bg-white">
                 <div class="col" style="overflow: scroll; max-height: 80vh">
                     {renderRows}
                 </div>
             </div>
+            {customQuery query}
         </div>
     |]
         where
@@ -39,6 +38,6 @@ instance View ShowQueryView ViewContext where
 
             tableBody = [hsx|<tbody>{forEach rows renderRow}</tbody>|]
             renderRow fields = [hsx|<tr>{forEach fields renderField}</tr>|]
-            renderField DynamicField { .. } = [hsx|<td><span data-fieldname={fieldName}>{fieldValue}</span></td>|]
+            renderField DynamicField { .. } = [hsx|<td><span data-fieldname={fieldName}>{sqlValueToText fieldValue}</span></td>|]
 
             columnNames = map (get #fieldName) (fromMaybe [] (head rows))

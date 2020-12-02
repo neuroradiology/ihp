@@ -7,11 +7,11 @@
 
 IHP provides a few basic functions to access the database. On top of Postgres SQL we try to provide a thin layer to make it easy to do all the common tasks your web application usually does.
 
-The only supported database platform is Postgres. Focussing on Postgres allows us to better integrate advanced postgres specific solutions into your application.
+The only supported database platform is Postgres. Focussing on Postgres allows us to better integrate advanced Postgres-specific solutions into your application.
 
-In development you do not need to set up anything to use postgres. The built-in development server automatically starts a Postgres instance to work with your application. The built-in development postgres servers is only listening on a unix socket and is not available via TCP.
+In development you do not need to set up anything to use postgres. The built-in development server automatically starts a Postgres instance to work with your application. The built-in development postgres server is only listening on a unix socket and is not available via TCP.
 
-When the dev server is running, you can connect to it via `postgresql:///app?host=YOUR_PROJECT_DIRECTORY/build/db` with your favorite database tool. When inside the project directory you can also use `make psql` to open a postgres REPL connected to the development database. The web interface of the dev server also has a GUI-based database editor (like phpmyadmin) at [http://localhost:8001/ShowDatabase](http://localhost:8001/ShowDatabase).
+When the dev server is running, you can connect to it via `postgresql:///app?host=YOUR_PROJECT_DIRECTORY/build/db` with your favorite database tool. When inside the project directory you can also use `make psql` to open a postgres REPL connected to the development database (named `app`), or start `psql` by pointing at the local sockets file `psql --host=/PATH/TO/PROJECT/DIRECTORY/build/db app`. The web interface of the dev server also has a GUI-based database editor (like phpmyadmin) at [http://localhost:8001/ShowDatabase](http://localhost:8001/ShowDatabase).
 
 Haskell data structures and types are generated automatically based on your database schema.
 
@@ -19,13 +19,7 @@ Haskell data structures and types are generated automatically based on your data
 
 Once you have created your project, the first step is to define a database schema. The database schema is basically just a SQL file with a lot of `CREATE TABLE ...` statements. You can find it at `Application/Schema.sql`.
 
-In a new project this file will look pretty empty. Like this:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-```
-
-The single line just activates the UUID extension for your database.
+In a new project this file will be empty. The UUID extension is automatically enabled for the database by IHP. 
 
 To define your database schema add your `CREATE TABLE ...` statements to the `Schema.sql`. For a users table this can look like this:
 
@@ -39,7 +33,7 @@ CREATE TABLE users (
 );
 ```
 
-Haskell data structures and types are automatically generated from the `Schema.sql` file. They are re-generated on every file change of the `Schema.sql`. We use the well known `postgresql-simple` haskell library to connect to the database. 
+Haskell data structures and types are automatically generated from the `Schema.sql` file. They are re-generated on every file change of the `Schema.sql`. We use the well-known `postgresql-simple` Haskell library to connect to the database. 
 
 ### Schema Designer
 
@@ -49,7 +43,7 @@ Because the SQL syntax is sometimes hard to remember, the framework provides a G
 
 Keep in mind that the Schema Editor also only modifies the `Schema.sql`. This works by parsing the SQL DDL-statements and applying transformations on the AST and the compiling and writing it back to `Schema.sql`. When there is an syntax error in the `Schema.sql` file the visual mode will be unavailable and you have to work with the code editor to fix the problem.
 
-You can add tables, columns, foreing key constraints, and enums. You can also edit these objects by right clicking them. New tables have a `id` column by default. Lots of opinionated short-cuts for rapid application development like automatically offering to add foreign key constraints are built-in.
+You can add tables, columns, foreign key constraints, and enums. You can also edit these objects by right-clicking them. New tables have a `id` column by default. Lots of opinionated short-cuts for rapid application development like automatically offering to add foreign key constraints are built-in.
 
 ![An example of using the context menu for editing a table](images/database/schema-designer-context-menu.png)
 
@@ -59,7 +53,7 @@ When the Visual Editor is not powerful enough, just switch back to the code edit
 
 ### Push to DB
 
-Afer we have added a few data structures to our `Schema.sql`, our running Postgres database is still empty. This is because we still need to import our database schema into the database.
+After we have added a few data structures to our `Schema.sql`, our running Postgres database is still empty. This is because we still need to import our database schema into the database.
 
 **In the Schema Designer:** Click on `Push to DB`:
 
@@ -87,7 +81,7 @@ You can also update the database while keeping its contents.
 
 ![Push to DB Button](images/database/schema-designer-push-to-db.png)
 
-**In the command line:** Run `make dumbdb` and after that `make db`.
+**In the command line:** Run `make dumpdb` and after that `make db`.
 
 When dumping the database into the `Fixtures.sql` first and then rebuilding the database with the dump, the contents will be kept when changing the schema.
 
@@ -95,7 +89,7 @@ When dumping the database into the `Fixtures.sql` first and then rebuilding the 
 
 ### Model Context
 
-In a pure functional programming language like haskell we need to pass the database connection to all functions which need to access the database. We use a implicit parameter `?modelContext :: ModelContext` to pass around the database connection without always specifying it. The `ModelContext` data structure is basically just a wrapper around the actually database connection.
+In a pure functional programming language like Haskell we need to pass the database connection to all functions which need to access the database. We use a implicit parameter `?modelContext :: ModelContext` to pass around the database connection without always specifying it. The `ModelContext` data structure is basically just a wrapper around the actual database connection.
 
 An implicit paramter is a parameter which is automatically passed to certain functions, it just needs to be available in the current scope.
 
@@ -107,11 +101,11 @@ myFunc :: (?modelContext :: ModelContext) => IO SomeResult
 
 All controller actions already have `?modelContext` in scope and thus can run database queries. Other application entry-points, like e.g. Scripts, also have this in scope.
 
-This also means, that when a function does not specify that it depends on the database connection in it's type signature (like `?modelContext :: ModelContext => ..`), you can be sure that it's not doing any database operations.
+This also means, that when a function does not specify that it depends on the database connection in its type signature (like `?modelContext :: ModelContext => ..`), you can be sure that it's not doing any database operations.
 
 ### Haskell Data Structures
 
-For every table in the `Schema.sql` a coresponding data structure will be generated on the haskell side. For example given a table:
+For every table in the `Schema.sql` a coresponding data structure will be generated on the Haskell side. For example given a table:
 
 ```sql
 CREATE TABLE users (
@@ -121,7 +115,7 @@ CREATE TABLE users (
 );
 ```
 
-The generated haskell data structure for this table will look like this:
+The generated Haskell data structure for this table will look like this:
 
 ```haskell
 data User = User
@@ -131,11 +125,11 @@ data User = User
     }
 ```
 
-The `id` field type `Id User` is basically just a wrapper around `UUID` for type-safety reasons. All database field names are mapped from `under_score` to `camelCase` on the haskell side.
+The `id` field type `Id User` is basically just a wrapper around `UUID` for type-safety reasons. All database field names are mapped from `under_score` to `camelCase` on the Haskell side.
 
-When a sql field can be `NULL`, the haskell field type will be contained in `Maybe`.
+When a sql field can be `NULL`, the Haskell field type will be contained in `Maybe`.
 
-In the Schema Designer you can take a look at the generated haskell code by right-clicking the table and clicking `Show Generated Haskell Code`.
+In the Schema Designer you can take a look at the generated Haskell code by right-clicking the table and clicking `Show Generated Haskell Code`.
 
 ## Retrieving Records
 
@@ -179,7 +173,7 @@ do
 
 This will run the SQL query `SELECT * FROM users WHERE id IN (...)`. The results in `users` have type `[User]`.
 
-## Fetching a `Maybe (Id record)`
+### Fetching a `Maybe (Id record)`
 
 Sometimes you have an optional id field, like e.g. when having a database schema like this:
 
@@ -211,6 +205,57 @@ action ShowTask { taskId } = do
     assignedUser <- fetchOneOrNothing (get #assignedUserId task)
 ```
 
+### Fetching `n` records (LIMIT)
+
+
+Use `limit` to query only up to `n` records from a table:
+
+```haskell
+do
+    users <- query @User
+        |> orderBy #firstname
+        |> limit 10
+        |> fetch
+```
+
+This will run a `SELECT * FROM users ORDER BY firstname LIMIT 10` query and will return the first 10 users ordered by their firstname.
+
+When you are only interested in the first result you can also use `fetchOne` as a shortcut for `|> limit 1`:
+
+```haskell
+do
+    firstUser <- query @User
+        |> orderBy #firstname
+        |> fetchOne
+```
+
+### Skipping `n` records (OFFSET)
+
+Use `offset` to skip `n` records from a table:
+
+```haskell
+do
+    users <- query @User
+        |> orderBy #firstname
+        |> offset 10
+        |> fetch
+```
+
+This is most often used together with `limit` to implement paging.
+
+
+### Counting records (COUNT queries)
+
+You can use `fetchCount` instead of `fetch` to get the count of records matching the query:
+
+```haskell
+do
+    activeUsersCount :: Int <- query @User
+        |> filterWhere (#isActive, True)
+        |> fetchCount
+
+    -- SELECT COUNT(*) FROM users WHERE is_active = 1
+```
 
 ## Raw SQL Queries
 
@@ -228,13 +273,15 @@ do
     result :: Project <- sqlQuery "SELECT * FROM projects WHERE id = ?" (Only id)
 ```
 
-You can query any kind of information, not only records:
+### Scalar Results
+
+The `sqlQuery` function always returns a list of rows as the result. When the result of your query is a single value (such as a integer or a string) use `sqlQueryScalar`:
 
 ```haskell
 do
-    count :: Int <- sqlQuery "SELECT COUNT(*) FROM projects" []
+    count :: Int <- sqlQueryScalar "SELECT COUNT(*) FROM projects" ()
 
-    randomString :: Text <- sqlQuery "SELECT md5(random()::text)" []
+    randomString :: Text <- sqlQueryScalar "SELECT md5(random()::text)" ()
 ```
 
 ## Create
@@ -318,11 +365,13 @@ do
         |> updateRecord
 ```
 
-This will set the lastname of user `cf633b17-c409-4df5-a2fc-8c3b3d6c2ea7` to `Tester` and run and `UPDATE` query to persist that:
+This will set the lastname of user `cf633b17-c409-4df5-a2fc-8c3b3d6c2ea7` to `Tester` and run an `UPDATE` query to persist that:
 
 ```sql
-UPDATE users SET firstname = "Max", lastname = "Tester" WHERE id = "cf633b17-c409-4df5-a2fc-8c3b3d6c2ea7"
+UPDATE users SET firstname = firstname, lastname = "Tester" WHERE id = "cf633b17-c409-4df5-a2fc-8c3b3d6c2ea7"
 ```
+
+The `UPDATE` query will only update columns that have been changed using `|> set #someField someValue` on the record.
 
 ## Delete
 
@@ -357,6 +406,20 @@ This will execute:
 DELETE FROM users WHERE id IN (...)
 ```
 
+### Deleting all records
+
+Use `deleteAll` to run a `DELETE` query for all rows in a table:
+
+```haskell
+do
+    deleteAll @User
+```
+
+This will execute:
+```sql
+DELETE FROM users
+```
+
 
 ## Enums
 
@@ -374,7 +437,7 @@ Next add the enum values by right clicking into the `Values` pane and click on `
 
 ### Adding enums via SQL
 
-Instead of using the Schema Designer you can also just add the requires SQL statement manually into `Application/Schema.hs`:
+Instead of using the Schema Designer you can also just add the required SQL statement manually into `Application/Schema.hs`:
 
 ```sql
 CREATE TYPE colors AS ENUM ('blue', 'red', 'yellow');
@@ -422,3 +485,68 @@ In your views, use `inputValue` to get a textual representation for your enum wh
     <input type="text" value={inputValue Blue}/>
 |]
 ```
+
+## Database Updates
+
+The *Update DB* operation is actually three steps:
+
+1. Data is read from the database and stored in `Fixtures.sql`
+2. The database is deleted and the schema in `Schema.sql` created
+3. The data in `Fixtures.sql` is (re-)inserted.
+
+The small arrow on the Update DB button shows a menu where it is possible to just run *Save DB to Fixtures* (step 1) or *Push to DB* (steps 2 + 3).
+
+
+## Making Changes to the Database
+
+The main purpose of the below steps is keeping the data rows from `Application/Fixtures.sql` between updates. If you are not concerned with keeping these rows when refactoring, feel free to skip this section.
+
+The main reason for the steps outlined below is that changes to the database schema is written to `Application/Schema.sql` only. The actual database is not altered. This means the actual schema and `Schema.sql` will be out of sync.
+
+When the schemas are out of sync, the INSERT statements in `Fixtures.sql` will fail. If this happens, and you attempt to update, the target table will be empty after the update. Try again, and the empty table is read from the database and the data in `Fixtures.sql` is gone.
+
+If you feel this is all a bit less streamlined compared to the rest of the development experience, you are correct. We will work on improving handling changes to the database.
+
+
+### Adding a Column
+
+#### Nullable or with Default
+
+This is always ok. The existing rows can be re-inserted from your `Fixtures.sql` without errors. After another update cycle `Fixtures.sql` will also contain the new column.
+
+#### Non-Nullable or Without Default
+
+It's best to do this in two steps. First follow the above. After updating the DB, fill the column with data and remove the nullable or default properties.
+
+Data can be updated by manually editing the table in the data view or by running UPDATE statements in the custom query field below the data view.
+
+
+### Renaming a Column
+
+When you are renaming a column, the development process of using `Update DB` will not work. This is because `Update DB` will save the old database state into the `Fixtures.sql`. There it still references the old column names. It will then fail on the next update.
+
+1. Rename your column `col_a` to `col_b` in the Schema Designer
+2. Rename the column in the database by executing `ALTER TABLE tablename RENAME COLUMN col_a TO col_b` in the custom query field below the data view.
+
+
+### Deleting a Column
+
+Similarly as for renaming, deleting a column currently won't work automatically either.
+
+1. Delete your column in the Schema Designer
+2. Delete the column from the database by executing `ALTER TABLE tablename DROP COLUMN colname`
+
+
+### Alternate Method
+
+There's always more than one way. This is another.
+
+1. Make changes in the Schema Designer
+2. Click `Save DB to Fixtures` in the Schema Designer (Use the arrow next to the `Update DB` button to see this option)
+3. Edit `Fixtures.sql` to your heart's content.
+4. Click `Push to DB` in the Schema Designer (Use the arrow next to the `Update DB` button to see this option)
+
+
+### Migrations In Production
+
+IHP currently has no built-in migration system yet. We're still experimenting with a great way to solve this. Until then, the recommended approach used by digitally induced is to manually migrate your database using DDL statements as shown above.
